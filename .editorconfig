@@ -1,0 +1,19 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{js,css,html,json,yml,yaml,md}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows PowerShell 5.1 reads a .ps1 without a byte-order mark as ANSI, so keep these scripts plain ASCII
+[*.{ps1,iss,cs}]
+charset = latin1

@@ -1,0 +1,97 @@
+{
+  // Terminal > Run Build Task (Ctrl+Shift+B) builds the Windows installer into dist\.
+  // Terminal > Run Task... lists the others.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Windows installer",
+      "detail": "Stages the app with its own Python, bundles the embedding model, compiles dist\\Perplexify-Setup-<version>-x64.exe",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\installer\\build.ps1"],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Windows installer (fast, for testing)",
+      "detail": "Same, with quick compression: finishes sooner, the installer is larger",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\installer\\build.ps1", "-Fast"],
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Windows installer (fast, skip tests)",
+      "detail": "Quick compression and no unit tests: for trying an interface tweak in an installed copy",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\installer\\build.ps1", "-Fast", "-SkipTests"],
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Windows installer (from scratch)",
+      "detail": "Throws away installer\\build first and stages everything again",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\installer\\build.ps1", "-Clean"],
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Test the installer (install, run, upgrade, uninstall)",
+      "detail": "Installs the newest dist\\ installer into a temporary folder, uses it, upgrades it, removes it",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\installer\\test-install.ps1"],
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run unit tests",
+      "type": "process",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "unittest", "discover", "-s", "tests", "-v"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run self-test",
+      "detail": "Proves an installation works end to end: import, keyword + meaning search, web app (no network, no key)",
+      "type": "process",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "perplexify", "selftest"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run the app (scratch data in .dev-data)",
+      "detail": "Starts Perplexify in its window from the source with its own data folder (F12 opens the inspector, Ctrl+R reloads after a change to web/), so it never touches your installed copy",
+      "type": "process",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "perplexify", "app", "--debug"],
+      "options": { "cwd": "${workspaceFolder}", "env": { "PERPLEXIFY_HOME": "${workspaceFolder}\\.dev-data" } },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Set up dev environment",
+      "detail": "Creates .venv (Python 3.12), installs the dependencies, runs the tests",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\setup-dev.ps1"],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

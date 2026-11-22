@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# local data when running from VS Code (see .vscode/launch.json)
+.dev-data/
+
+# installer build: downloads, the staged app, and the finished installers
+installer/cache/
+installer/build/
+dist/
+
+# editors and OS
+*.log
+Thumbs.db
+.DS_Store

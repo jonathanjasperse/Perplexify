@@ -1,0 +1,34 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.testing.unittestEnabled": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestArgs": ["-v", "-s", "./tests", "-p", "test_*.py"],
+  "editor.formatOnSave": false,
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.exclude": {
+    "**/__pycache__": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/.dev-data": true,
+    "installer/cache": true,
+    "installer/build": true,
+    "dist": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/.dev-data/**": true,
+    "**/installer/cache/**": true,
+    "**/installer/build/**": true,
+    "**/dist/**": true
+  },
+  "[javascript]": { "editor.tabSize": 2 },
+  "[css]": { "editor.tabSize": 2 },
+  "[html]": { "editor.tabSize": 2 },
+  "[json]": { "editor.tabSize": 2 },
+  "[jsonc]": { "editor.tabSize": 2 },
+  "[powershell]": { "editor.tabSize": 4 },
+  "files.associations": { "*.iss": "innosetup" }
+}

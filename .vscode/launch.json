@@ -1,0 +1,68 @@
+{
+  // F5 runs the selected configuration. The "scratch" ones keep their data in .dev-data (ignored by git)
+  // so experiments never touch the libraries of an installed copy of the app.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Perplexify: app (scratch data)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "perplexify",
+      "args": ["app", "--debug"],
+      "cwd": "${workspaceFolder}",
+      "env": { "PERPLEXIFY_HOME": "${workspaceFolder}/.dev-data" },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Perplexify: server only on port 8765 (scratch data)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "perplexify",
+      "args": ["serve", "--no-browser", "--port", "8765"],
+      "cwd": "${workspaceFolder}",
+      "env": { "PERPLEXIFY_HOME": "${workspaceFolder}/.dev-data" },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Perplexify: app (your real data)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "perplexify",
+      "args": ["app"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Perplexify: command line (asks for the arguments)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "perplexify",
+      "args": "${input:cliArgs}",
+      "cwd": "${workspaceFolder}",
+      "env": { "PERPLEXIFY_HOME": "${workspaceFolder}/.dev-data" },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Tests: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["discover", "-s", "tests", "-p", "${fileBasename}", "-v"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "cliArgs",
+      "type": "promptString",
+      "description": "Arguments after 'python -m perplexify' (for example: search \"audio buffer\" --full)",
+      "default": "--help"
+    }
+  ]
+}

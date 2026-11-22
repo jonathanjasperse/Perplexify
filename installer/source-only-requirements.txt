@@ -1,0 +1,5 @@
+# Packages that PyPI publishes only as source code. They are tiny pure-Python libraries (pywebview needs proxy_tools).
+# installer\build.ps1 builds each one into a wheel, once, from exactly this hash-checked file (installer\cache\wheels),
+# and installs it from there, because the installer build otherwise accepts ready-made wheels only.
+proxy_tools==0.1.0 \
+    --hash=sha256:ccb3751f529c047e2d8a58440d86b205303cf0fe8146f784d1cbcd94f0a28010
