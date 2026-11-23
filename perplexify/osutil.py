@@ -1,7 +1,7 @@
 """OS-specific helpers (Windows and macOS; everything degrades gracefully elsewhere).
 
 * Secret storage for API keys: Windows DPAPI, macOS Keychain (through the `security` tool),
-  otherwise a plain fallback. Keys are never sent back to the browser.
+  otherwise (Linux) base64 in an owner-only file, because there is no secret storage to use. Keys are never sent back to the browser.
 * A named mutex so the Windows installer can detect a running copy (Inno Setup `AppMutex`).
 * Native file/folder pickers (the browser UI cannot hand us real paths).
 """
@@ -26,7 +26,11 @@ def _run(cmd: list[str], timeout: float = 20, **kw) -> subprocess.CompletedProce
     if IS_WINDOWS:
         kw.setdefault("creationflags", _CREATE_NO_WINDOW)
     # stdin must be set explicitly: a windowless pythonw.exe has no valid stdin handle
-    return subprocess.run(cmd, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, **kw)
+    if "input" not in kw:
+        kw.setdefault("stdin", subprocess.DEVNULL)
+    else:
+        kw.pop("stdin", None)
+    return subprocess.run(cmd, capture_output=True, timeout=timeout, **kw)
 
 
 # --------------------------------------------------------------------------- Windows DPAPI
@@ -58,9 +62,14 @@ if IS_WINDOWS:
 
 # --------------------------------------------------------------------------- macOS Keychain
 def _keychain_set(account: str, secret: str) -> bool:
+    # The secret goes in through stdin (`security -i` reads commands from it), never as an argument, because other users
+    # of the Mac can see a process's arguments. It is sent as hex (-X) so no quoting can go wrong. Not yet tried on a Mac.
+    command = f"add-generic-password -a {account} -s {KEYCHAIN_SERVICE} -U -X {secret.encode('utf-8').hex()}\n"
     try:
-        r = _run(["security", "add-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-w", secret, "-U"])
-        return r.returncode == 0
+        r = _run(["security", "-i"], input=command.encode("ascii"))
+        if r.returncode != 0:
+            return False
+        return _keychain_get(account) == secret       # `security -i` may exit 0 after a failed command, so read it back
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -81,20 +90,28 @@ def _keychain_delete(account: str) -> None:
 
 
 # --------------------------------------------------------------------------- secrets API
+class SecretStorageError(RuntimeError):
+    """The operating system's secret storage is there but would not take the key. The key is not saved."""
+
+
 def protect(text: str) -> str:
-    """Store a secret; returns an opaque token that is safe to keep in settings.json."""
+    """Store a secret; returns an opaque token that is safe to keep in settings.json.
+
+    On Windows and macOS a failure raises SecretStorageError: the key is never quietly downgraded to something readable.
+    Only on other systems, which have no secret storage we can reach, is it kept as base64 in the owner-only settings file."""
     if not text:
         return ""
     raw = text.encode("utf-8")
     if IS_WINDOWS:
         try:
             return "dpapi:" + base64.b64encode(_dpapi(raw, True)).decode("ascii")
-        except Exception:
-            pass
+        except Exception as e:
+            raise SecretStorageError(f"Windows could not encrypt the key ({e}). It was not saved.") from e
     if IS_MAC:
         account = uuid.uuid4().hex
         if _keychain_set(account, text):
             return "keychain:" + account
+        raise SecretStorageError("The macOS Keychain would not store the key. It was not saved.")
     return "plain:" + base64.b64encode(raw).decode("ascii")
 
 
@@ -112,6 +129,17 @@ def unprotect(token: str) -> str:
     except Exception:
         return ""
     return ""
+
+
+def upgrade(token: str) -> str:
+    """The token to keep for a stored secret: a `plain:` one is moved into the OS secret storage where there is one
+    (Windows, macOS). Anything else, or a failed attempt, returns the token unchanged."""
+    if not token.startswith("plain:") or not (IS_WINDOWS or IS_MAC):
+        return token
+    try:
+        return protect(unprotect(token)) or token
+    except SecretStorageError:
+        return token
 
 
 def discard(token: str) -> None:

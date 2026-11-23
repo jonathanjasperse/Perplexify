@@ -272,7 +272,10 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
                 raise HTTPException(400, str(e)) from e
         ids = [m["id"] for m in models]
         model = body.model if (body.model and (body.model in ids or not ids)) else providers.pick_default_model(prov["id"], ids)
-        profile = settings.connect(prov["id"], None if use_env else key, model, base_url, body.name, use_env)
+        try:
+            profile = settings.connect(prov["id"], None if use_env else key, model, base_url, body.name, use_env)
+        except osutil.SecretStorageError as e:
+            raise HTTPException(500, str(e)) from e
         info: dict = {}
         try:
             info = ctx.llm_info(profile, force=True)
@@ -344,7 +347,10 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
     def embedding_key(body: KeyBody):
         if body.provider != "voyage":
             raise HTTPException(400, "Only Voyage AI needs its own key; the others reuse the connected provider's key.")
-        settings.set_embedding_key("voyage", body.key)
+        try:
+            settings.set_embedding_key("voyage", body.key)
+        except osutil.SecretStorageError as e:
+            raise HTTPException(500, str(e)) from e
         return {"ok": True}
 
     @app.post("/api/embedders/test")

@@ -1,11 +1,13 @@
 """The search settings a fresh installation starts with (the user's chosen defaults) and what a saved choice does to them."""
 import json
+import os
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from helpers import TempHome
 
-from perplexify import paths
+from perplexify import osutil, paths
 from perplexify.settings import DEFAULT_EMBEDDER, RETRIEVAL_DEFAULTS, Settings
 
 
@@ -63,6 +65,49 @@ class Bundled(unittest.TestCase):
         pins = json.loads((Path(__file__).resolve().parent.parent / "installer" / "pins.json").read_text("utf-8"))
         self.assertEqual(pins["embedding_model"], DEFAULT_EMBEDDER["model"])
         self.assertEqual(pins["reranker_model"], RETRIEVAL_DEFAULTS["reranker_model"])
+
+
+class KeyStorage(TempHome):
+    def setUp(self):
+        (paths.home() / "settings.json").unlink(missing_ok=True)
+
+    def test_a_failed_encryption_never_falls_back_to_a_readable_key(self):
+        with mock.patch.object(osutil, "IS_WINDOWS", True), mock.patch.object(osutil, "IS_MAC", False),                 mock.patch.object(osutil, "_dpapi", side_effect=OSError("no")):
+            with self.assertRaises(osutil.SecretStorageError):
+                osutil.protect("sk-secret")
+        with mock.patch.object(osutil, "IS_WINDOWS", False), mock.patch.object(osutil, "IS_MAC", True),                 mock.patch.object(osutil, "_keychain_set", return_value=False):
+            with self.assertRaises(osutil.SecretStorageError):
+                osutil.protect("sk-secret")
+
+    def test_a_failed_save_keeps_the_old_key_and_writes_nothing(self):
+        s = Settings()
+        with mock.patch.object(osutil, "protect", return_value="plain:b2xk"):
+            s.connect("openai", "old-key", "gpt-x")
+        before = (paths.home() / "settings.json").read_text("utf-8")
+        with mock.patch.object(osutil, "protect", side_effect=osutil.SecretStorageError("no")):
+            with self.assertRaises(osutil.SecretStorageError):
+                s.connect("openai", "new-key", "gpt-x")
+        self.assertEqual((paths.home() / "settings.json").read_text("utf-8"), before)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_the_settings_file_is_owner_only(self):
+        Settings().update({"retrieval": {"top_k": 12}})
+        self.assertEqual((paths.home() / "settings.json").stat().st_mode & 0o077, 0)
+
+    def test_old_plain_keys_move_into_secure_storage_when_settings_load(self):
+        (paths.home() / "settings.json").write_text(json.dumps(
+            {"version": 2, "profiles": [{"id": "openai", "provider": "openai", "model": "m", "api_key_enc": "plain:" + "c2stb2xk"}],
+             "embedding_keys": {"voyage": "plain:c2stb2xk"}}), "utf-8")
+        with mock.patch.object(osutil, "IS_WINDOWS", True), mock.patch.object(osutil, "_dpapi", side_effect=lambda b, protect: b"E" + b):
+            s = Settings()
+        saved = json.loads((paths.home() / "settings.json").read_text("utf-8"))
+        self.assertTrue(saved["profiles"][0]["api_key_enc"].startswith("dpapi:"))
+        self.assertTrue(saved["embedding_keys"]["voyage"].startswith("dpapi:"))
+        self.assertEqual(s.get()["profiles"][0]["id"], "openai")
+
+    def test_a_failed_upgrade_leaves_the_old_key_working(self):
+        with mock.patch.object(osutil, "IS_WINDOWS", True), mock.patch.object(osutil, "_dpapi", side_effect=OSError("no")):
+            self.assertEqual(osutil.upgrade("plain:c2stb2xk"), "plain:c2stb2xk")
 
 
 if __name__ == "__main__":

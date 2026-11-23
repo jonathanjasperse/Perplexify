@@ -178,7 +178,7 @@ MR.openAdd = function (tab = 'web', libId = null) {
 
   const draw = () => {
     m.$('.m-body').innerHTML = `
-      <div class="tabs" role="tablist">
+      <div class="tabs pill" role="tablist">
         <button role="tab" data-tab="web" aria-selected="${tab === 'web'}">Website</button>
         <button role="tab" data-tab="code" aria-selected="${tab === 'code'}">Code repository</button>
         <button role="tab" data-tab="docs" aria-selected="${tab === 'docs'}">Documents</button></div>

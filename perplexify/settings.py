@@ -145,6 +145,7 @@ class Settings:
         self._path = path or paths.settings_path()
         self._lock = threading.RLock()
         self._data = self._load()
+        self._upgrade_keys()
 
     # ------------------------------------------------------------------ persistence
     def _load(self) -> dict:
@@ -174,14 +175,30 @@ class Settings:
         data["active_profile"] = ap if ap in ids else (ids[0] if ids else None)
         return data
 
+    def _upgrade_keys(self) -> None:
+        """Keys an earlier version stored as readable base64 (`plain:`) move into the OS secret storage."""
+        changed = False
+        holders = [(p, "api_key_enc") for p in self._data["profiles"]] + [(self._data["embedding_keys"], k) for k in self._data["embedding_keys"]]
+        for holder, name in holders:
+            old = holder.get(name) or ""
+            new = osutil.upgrade(old)
+            if new != old:
+                holder[name] = new
+                changed = True
+        if changed:
+            self.save()
+
     def save(self) -> None:
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self._data, indent=2), "utf-8")
+            # Created owner-only from the start (a chmod afterwards would leave a window where others can read it).
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(self._data, indent=2))
             os.replace(tmp, self._path)
             try:
-                os.chmod(self._path, 0o600)
+                os.chmod(self._path, 0o600)       # also tightens a file an older version left readable
             except OSError:
                 pass
 
@@ -266,8 +283,9 @@ class Settings:
                            "model": model or existing.get("model") or prov["default_model"],
                            "use_env_key": use_env_key})
             if api_key:
+                token = osutil.protect(api_key.strip())       # first: if this fails the old key must survive
                 osutil.discard(merged.get("api_key_enc", ""))
-                merged["api_key_enc"] = osutil.protect(api_key.strip())
+                merged["api_key_enc"] = token
             profile = sanitize_profile(merged)
             self._data["profiles"] = [p for p in self._data["profiles"] if p["id"] != pid] + [profile]
             self._data["active_profile"] = pid
@@ -318,8 +336,9 @@ class Settings:
 
     def set_embedding_key(self, provider_id: str, key: str) -> None:
         with self._lock:
+            token = osutil.protect(key.strip()) if key.strip() else ""
             osutil.discard(self._data["embedding_keys"].get(provider_id, ""))
-            self._data["embedding_keys"][provider_id] = osutil.protect(key.strip()) if key.strip() else ""
+            self._data["embedding_keys"][provider_id] = token
             self.save()
 
     def update(self, body: dict) -> None:
