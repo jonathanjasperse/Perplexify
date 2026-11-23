@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -361,6 +362,7 @@ class NativeWindow:
             self.window = webview.create_window(APP_NAME, self.url, **options)
             self.window.events.closing += self._on_closing
             self.window.events.shown += self._on_shown
+            self._wire_microphone()
             start: dict = {"debug": self.debug, "private_mode": False,       # private mode would forget localStorage: the theme, the ticks
                            "storage_path": str(self._storage())}
             icon = icon_file()
@@ -378,6 +380,48 @@ class NativeWindow:
             log.exception("the window failed")
             self.problem = f"{type(e).__name__}: {e}"
         return self._shown.is_set()               # shown at least once: it ran, so do not also open a browser
+
+    # ---- the microphone
+    # The interface asks for the microphone only when someone presses its speech-to-text button. In a
+    # browser Edge/Chrome would then show a permission prompt; a WebView2 window has no such prompt, and
+    # an unanswered permission request is quietly refused (pywebview listens for none of them), so
+    # dictation could never work in the app's own window. Here we answer instead: the microphone from
+    # this app's own address is allowed, everything else keeps the default refusal.
+    def _wire_microphone(self) -> None:
+        """Watch the page's permission requests and allow only this app's microphone ones."""
+        if not IS_WINDOWS:
+            return
+
+        def on_permission(_sender, args) -> None:
+            try:
+                from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind, CoreWebView2PermissionState
+                if args.PermissionKind == CoreWebView2PermissionKind.Microphone \
+                        and str(args.Uri or "").startswith("http://127.0.0.1"):
+                    args.State = CoreWebView2PermissionState.Allow
+                    args.Handled = True
+            except Exception:  # noqa: BLE001
+                log.debug("could not answer a permission request", exc_info=True)
+
+        def when_ready() -> None:
+            # The form and its WebView2 control exist as soon as the window does; the Core shell follows a
+            # moment later. Eight seconds is generous - it is always ready long before a question is asked.
+            for _ in range(160):
+                if self._quitting:
+                    return
+                try:
+                    control = getattr(self.window, "native", None)
+                    control = getattr(control, "webview", None)
+                    core = control.CoreWebView2 if control is not None else None
+                    if core is not None:
+                        core.PermissionRequested += on_permission
+                        log.debug("microphone requests from the interface are allowed (speech to text)")
+                        return
+                except Exception:  # noqa: BLE001   the shell is not ready yet, or something is not there
+                    pass
+                time.sleep(0.05)
+            log.debug("the WebView2 core never appeared, so speech to text stays a browser feature")
+
+        threading.Thread(target=when_ready, daemon=True, name="perplexify-microphone").start()
 
     # ---- events (the closing one runs on the window's own thread: nothing in it may wait for that thread)
     def _on_shown(self) -> None:

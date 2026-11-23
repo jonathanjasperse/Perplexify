@@ -13,6 +13,7 @@
   MR.renderViewTabs();
   MR.history.init();      // the History view and the suggestions that come from it
   MR.bookmarks.init();    // the Bookmarks view (a tree of folders and saved sources)
+  MR.voice.init();        // the microphone in every search box (Ask, Search, Bookmarks, History)
   MR.wireTranscript();
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); const p = MR.$(MR.S.view === 'search' ? '#sv-q' : MR.S.view === 'history' ? '#hv-q' : MR.S.view === 'bookmarks' ? '#bm-q' : '#prompt'); if (p) { p.focus(); if (p.select) p.select(); } }

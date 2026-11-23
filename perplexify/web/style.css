@@ -5,7 +5,8 @@
    light: neutral grey surfaces (never white, never yellow), near-black text, one muted terracotta accent, dark primary button.
    Type: a normal, light proportional UI font (the system's own, like ChatGPT and Claude use). Monospace is kept
    only for real code. Rules for both themes: flat surfaces, 1px hairlines, radius 8px (controls) and 12px (cards,
-   dialogs), no shadows, glows or gradients.
+   dialogs), no shadows, glows or gradients. Deliberate exceptions, asked for in kind: a highlighted source card
+   blooms white around it, and the microphone breathes while it listens (see the --glow / --rec-pulse tokens).
    Where to change the look: the colour tokens just below (one set per theme), then --r / --r-lg for the corners. */
 
 :root {
@@ -52,6 +53,9 @@
   --warn: #d9a441;
   --err: #ee8078;
   --overlay: rgba(8, 9, 11, 0.66);
+  --glow: 0 0 18px rgba(255, 255, 255, 0.16), 0 0 4px rgba(255, 255, 255, 0.12);      /* the bloom on a highlighted source card */
+  --glow-soft: 0 0 12px rgba(255, 255, 255, 0.10);                                    /* it fades to this; also the hover glow */
+  --rec-pulse: 238, 128, 120;        /* the microphone's halo while it listens (--err as an rgb() triplet, for rgba()) */
 }
 
 :root[data-theme="light"] {
@@ -80,6 +84,9 @@
   --warn: #775408;
   --err: #982f26;
   --overlay: rgba(32, 34, 38, 0.42);
+  --glow: 0 0 14px rgba(255, 255, 255, 0.9), 0 0 3px rgba(255, 255, 255, 0.8);        /* white reads on the grey page too */
+  --glow-soft: 0 0 10px rgba(255, 255, 255, 0.6);
+  --rec-pulse: 152, 47, 38;
 }
 
 * { box-sizing: border-box; }
@@ -392,9 +399,18 @@ input.input, select.input { height: 36px; }
 .sources > .label { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .sources > .label::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .cards { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 12px 10px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 12px 10px; min-width: 0;
+        transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background-color 0.22s ease; }
 :root[data-theme="light"] .card { background: var(--raise); }
-.card.flash, :root[data-theme="light"] .card.flash { border-color: var(--accent); background: var(--accent-wash); }
+/* The source-card highlight: the card grows a touch and blooms white — hovered, it does so quietly; when a citation
+   [n] in the answer points at it, the flash below swells it and lets the glow breathe out again (see card-flash). */
+.card:hover { transform: scale(1.015); border-color: var(--line-strong); box-shadow: var(--glow-soft); z-index: 2; }
+.card.flash, :root[data-theme="light"] .card.flash { border-color: var(--accent); background: var(--accent-wash); animation: card-flash 1.4s ease; z-index: 2; }
+@keyframes card-flash {
+  0%   { transform: scale(1);    box-shadow: var(--glow-soft); }
+  25%  { transform: scale(1.04); box-shadow: var(--glow); }
+  100% { transform: scale(1);    box-shadow: var(--glow-soft); }
+}
 .card .c-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .card .c-n { font-weight: 560; color: var(--accent); }
 .card .c-title { font-size: 13px; font-weight: 480; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
@@ -466,6 +482,27 @@ input.input, select.input { height: 36px; }
 .slash button.on { background: var(--accent-wash); }
 .composer .column { position: relative; }
 
+/* ---------------------------------------------------------------- voice input */
+/* The microphone in every search box: Ask, Search, Bookmarks and History (see js/voice.js). A quiet round
+   button beside the send (or Search) one; while it listens it turns red and breathes a ring around itself,
+   and the box's edge takes a reddish tint so you can see dictation is armed even without looking at the button. */
+.mic-btn {
+  flex: none; width: 36px; height: 36px; display: grid; place-items: center;
+  padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted);
+}
+.mic-btn:hover { background: var(--hover); color: var(--text); }
+.mic-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.promptbox .mic-btn { align-self: flex-end; }            /* sits on the bottom edge like the send button */
+.mic-btn.unsupported { opacity: 0.45; }                  /* no speech recognition here (e.g. Firefox) */
+.mic-btn.listening { color: var(--err); background: var(--btn); animation: mic-pulse 1.5s ease-out infinite; }
+.mic-btn.listening svg { stroke-width: 2; }
+@keyframes mic-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(var(--rec-pulse), 0.45); }
+  70%  { box-shadow: 0 0 0 9px rgba(var(--rec-pulse), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--rec-pulse), 0); }
+}
+.promptbox.listening, .sv-input.listening { border-color: rgba(var(--rec-pulse), 0.55); }
+
 /* ---------------------------------------------------------------- source viewer */
 .viewer { position: absolute; top: 0; right: 0; bottom: 0; width: min(680px, 62%); background: var(--panel); border-left: 1px solid var(--line-strong); display: flex; flex-direction: column; z-index: 5; }
 .viewer .v-head { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
@@ -536,6 +573,6 @@ input.input, select.input { height: 36px; }
   .brand .ver { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin { animation: none; }
-  .ring .arc, .bar > i { transition: none; }
+  .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin, .mic-btn.listening, .card.flash { animation: none; }
+  .ring .arc, .bar > i, .card, .card:hover { transition: none; transform: none; }
 }
