@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, github, osutil, paths, providers, tasks
+from . import __version__, github, osutil, paths, providers, tasks, websearch
 from .context import AppContext
 from .embeddings import EmbeddingError, validate_embedder
 from .bookmarks_api import make_router as bookmarks_router
@@ -136,6 +136,7 @@ class ChatBody(Body):
     profile_id: str | None = None
     options: dict | None = None
     chat_id: str | None = None        # the saved conversation this question continues (see history.py); a new one when absent
+    research: bool = False            # also search the web (the model plans the searches); works with no library selected
 
 
 class KeyBody(Body):
@@ -352,6 +353,26 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
         except osutil.SecretStorageError as e:
             raise HTTPException(500, str(e)) from e
         return {"ok": True}
+
+    @app.post("/api/search-keys")
+    def search_key(body: KeyBody):
+        """Save (or, with an empty key, remove) the key of a web search service used by Research mode."""
+        if body.provider not in websearch.KEY_SERVICES:
+            raise HTTPException(400, "Web search keys can be saved for Tavily or Brave Search.")
+        try:
+            settings.set_embedding_key(body.provider, body.key)
+        except osutil.SecretStorageError as e:
+            raise HTTPException(500, str(e)) from e
+        return {"ok": True, "engine": websearch.engine_name(settings)}
+
+    @app.post("/api/search-keys/test")
+    def search_key_test():
+        """Run one small web search with whichever service is set up, to show that it works."""
+        try:
+            results, engine = websearch.search("Perplexify documentation search", settings, 3)
+        except websearch.WebSearchError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "engine": engine, "results": len(results)}
 
     @app.post("/api/embedders/test")
     def embedder_test(body: EmbedderBody):
@@ -595,12 +616,14 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
     def chat(body: ChatBody):
         profile = settings.profile(body.profile_id)
         meta = {"profile": {"id": profile["id"], "name": profile.get("name"), "model": profile.get("model")} if profile else {},
-                "libraries": [{"id": lib.id, "name": lib.name} for lib in (ctx.libs.get(i) for i in body.libraries) if lib is not None]}
+                "libraries": [{"id": lib.id, "name": lib.name} for lib in (ctx.libs.get(i) for i in body.libraries) if lib is not None],
+                "research": body.research}
 
         def events():
             # the history wrapper passes every event through and saves the turn (also a stopped one) when the stream ends
             stream = ctx.history.record(body.question, body.chat_id,
-                                        ctx.engine.answer_stream(body.question, body.history, body.libraries, body.profile_id, body.options), meta)
+                                        ctx.engine.answer_stream(body.question, body.history, body.libraries, body.profile_id, body.options,
+                                                                 research=body.research), meta)
             try:
                 for ev in stream:
                     yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"

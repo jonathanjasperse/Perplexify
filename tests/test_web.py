@@ -88,7 +88,7 @@ class Styling(unittest.TestCase):
 
         for theme in ("dark", "light"):
             t = theme_tokens(theme)
-            for text in ("text", "muted", "faint", "accent", "ok", "warn", "err"):
+            for text in ("text", "muted", "faint", "accent", "accent-inv", "ok", "warn", "err"):
                 for surface in ("bg", "panel", "raise", "btn"):
                     a, b = lum(rgb(t[text])), lum(rgb(t[surface]))
                     ratio = (max(a, b) + 0.05) / (min(a, b) + 0.05)

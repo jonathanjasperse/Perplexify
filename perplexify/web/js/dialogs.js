@@ -419,7 +419,35 @@ MR.openSettings = function (tab = 'models') {
       ${chk('query_rewrite', 'Rewrite follow-up questions', 'Turns "and its parameters?" into a standalone search (one short extra model call).')}
       ${chk('multi_query', 'Search with extra phrasings', 'Asks the model for alternative wordings. Better recall, one more call.')}
       ${chk('rerank', 'Rerank with a cross-encoder', 'More accurate ordering; the small model it needs ships with Perplexify.')}
-      <div class="row"><button class="btn primary" id="st-save" type="button">Save</button><span class="hint" id="st-msg"></span></div>`;
+      <div class="row" style="margin-bottom:18px"><button class="btn primary" id="st-save" type="button">Save</button><span class="hint" id="st-msg"></span></div>
+      <div class="group"><h3>Web research (the Research switch beside the question box)</h3>
+        <p class="hint" style="margin:0 0 10px">The connected model decides what to search for; Perplexify runs the searches, reads the best pages and hands them to the model to cite.
+          A search service key makes this dependable. Without one, DuckDuckGo is tried, which often refuses automated searches.</p>
+        ${[['tavily', 'Tavily', 'tvly-...', 'https://app.tavily.com/home', 'built for AI research, 1,000 free searches a month'],
+           ['brave', 'Brave Search', 'BSA...', 'https://api-dashboard.search.brave.com/app/keys', 'independent index, free tier']].map(([id, name, ph, url, note]) => {
+          const saved = S.settings.embedding_keys && S.settings.embedding_keys[id];
+          return `<div class="field"><span class="label">${name} key ${saved ? '<span class="ok">saved</span>' : ''}</span>
+            <div class="row"><input class="input" data-wk="${id}" type="password" autocomplete="off" placeholder="${saved ? 'saved. Paste a new key to replace it' : ph}">
+              <button class="btn" data-wsave="${id}" type="button">Save</button>${saved ? `<button class="btn quiet" data-wdel="${id}" type="button">Remove</button>` : ''}</div>
+            <div class="hint"><a href="${url}" target="_blank" rel="noopener noreferrer">Get a key &#8599;</a> &middot; ${note}</div></div>`;
+        }).join('')}
+        <div class="row"><button class="btn" id="st-wtest" type="button">Test web search</button><span class="hint" id="st-wmsg"></span></div></div>`;
+    const wsay = (t, c) => { m.$('#st-wmsg').textContent = t; m.$('#st-wmsg').className = 'hint ' + c; };
+    const wkey = async (id, key) => {
+      try { await MR.api('/api/search-keys', { method: 'POST', body: { provider: id, key } }); await MR.reloadSettings(); await search(); wsay(key ? 'Key saved.' : 'Key removed.', 'ok'); }
+      catch (x) { wsay(x.message, 'err'); }
+    };
+    MR.$$('[data-wsave]', m.$('#st-pane')).forEach((b) => b.addEventListener('click', () => {
+      const v = m.$(`[data-wk="${b.dataset.wsave}"]`).value.trim();
+      if (!v) { wsay('Paste the key first.', 'err'); return; }
+      wkey(b.dataset.wsave, v);
+    }));
+    MR.$$('[data-wdel]', m.$('#st-pane')).forEach((b) => b.addEventListener('click', () => wkey(b.dataset.wdel, '')));
+    m.$('#st-wtest').addEventListener('click', async () => {
+      wsay('Searching...', 'muted');
+      try { const r = await MR.api('/api/search-keys/test', { method: 'POST' }); wsay(`Works: ${r.results} ${r.results === 1 ? 'result' : 'results'} from ${r.engine}.`, 'ok'); }
+      catch (x) { wsay(x.message, 'err'); }
+    });
     m.$('#st-save').addEventListener('click', async () => {
       const body = {};
       MR.$$('[data-r]', m.$('#st-pane')).forEach((i) => { body[i.dataset.r] = i.type === 'checkbox' ? i.checked : +i.value; });

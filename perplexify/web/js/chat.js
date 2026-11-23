@@ -1,6 +1,7 @@
 'use strict';
 /* The conversation: transcript, composer, streaming, source cards, in-app source viewer. */
 
+const ICON_GLOBE = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.6-3.9-9S9.4 5.6 12 3z"/></svg>';
 const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 MR._spinI = 0;
 MR._spinTimer = null;
@@ -71,6 +72,8 @@ MR.renderComposer = function () {
     <div class="slash" id="slash" hidden></div>
     <div class="promptbox">
       <textarea id="prompt" rows="1" placeholder="Ask about your libraries..." aria-label="Question" spellcheck="true"></textarea>
+      <button class="research-btn" id="btn-research" type="button" aria-pressed="false" title="Research: the model also searches the web and cites the pages it read. Works with no library ticked.">
+        <span class="r-box" aria-hidden="true"></span>${ICON_GLOBE}<span>Research</span></button>
       <button class="btn primary small" id="btn-send" type="button">send</button></div>
     <div class="hintbar"><div class="left">
       <span><span class="kbd">Enter</span> send</span><span><span class="kbd">Shift</span>+<span class="kbd">Enter</span> new line</span>
@@ -80,8 +83,19 @@ MR.renderComposer = function () {
   ta.addEventListener('input', () => { MR.autosize(); MR.slashUpdate(); });
   ta.addEventListener('keydown', MR.promptKey);
   MR.$('#btn-send').addEventListener('click', () => (MR.S.streaming ? MR.stop() : MR.submit()));
-  MR.updateScope();
+  MR.$('#btn-research').addEventListener('click', () => MR.setResearch(!MR.S.research));
+  MR.setResearch(!!MR.store.get('research', false));
   ta.focus();
+};
+/* Research mode: the model plans web searches, the app reads the pages, and the answer cites them (in the inverse accent) */
+MR.setResearch = function (on) {
+  MR.S.research = !!on;
+  MR.store.set('research', MR.S.research);
+  const b = MR.$('#btn-research');
+  if (b) b.setAttribute('aria-pressed', String(MR.S.research));
+  const ta = MR.$('#prompt');
+  if (ta) ta.placeholder = MR.S.research ? 'Ask anything. The web is searched for you...' : 'Ask about your libraries...';
+  MR.updateScope();
 };
 MR.autosize = function () {
   const t = MR.$('#prompt');
@@ -100,7 +114,8 @@ MR.updateScope = function () {
   const el = MR.$('#scope');
   if (el) {
     const t = MR.scopeLabel();
-    el.textContent = t ? 'searching ' + t : 'no library selected';
+    el.textContent = MR.S.research ? (t ? 'searching the web + ' + t : 'searching the web') : (t ? 'searching ' + t : 'no library selected');
+    el.classList.toggle('web', !!MR.S.research);
     el.title = MR.S.libs.filter((l) => MR.S.selected.has(l.id)).map((l) => l.name).join(', ');
   }
   const b = MR.$('#btn-send');
@@ -205,7 +220,7 @@ MR.beginTurn = function (q, opts = {}) {
   if (welcome) tr.innerHTML = '';
   tr.appendChild(MR.el(`<article class="turn user"><div class="column"><div class="prompt-line"><span class="caret">&gt;</span><div class="utext">${MR.esc(q)}</div></div></div></article>`));
   const turn = MR.el(`<article class="turn bot"><div class="column">
-      <div class="trace"></div><details class="thinking" hidden><summary>reasoning</summary><div class="t-body"></div></details>
+      <div class="trace"></div><details class="thinking" hidden><summary><span class="swirl" aria-hidden="true"><i></i><i></i><i></i></span><span class="t-label">Thinking</span><span class="t-chev" aria-hidden="true"></span></summary><div class="t-body"></div></details>
       <div class="answer"></div><div class="notices"></div><div class="sources" hidden></div><div class="foot"></div></div></article>`);
   tr.appendChild(turn);
   if (!replay) tr.scrollTop = tr.scrollHeight;
@@ -226,10 +241,23 @@ MR.beginTurn = function (q, opts = {}) {
   const sub = (html) => R.trace.appendChild(MR.el('<div class="ln"><span class="dot"></span><span class="sub">' + html + '</span></div>'));
   const render = (final) => {
     R.answer.innerHTML = MR.md(R.text) + (final ? '' : '<span class="cursor"></span>');
+    if (R.srcs.some((s) => s.kind === 'web')) {         // citations of web pages take the inverse accent
+      const web = new Set(R.srcs.filter((s) => s.kind === 'web').map((s) => String(s.n)));
+      MR.$$('.cite', R.answer).forEach((c) => { if (web.has(c.dataset.n)) c.classList.add('web'); });
+    }
   };
   const schedule = () => { if (!R.raf) R.raf = requestAnimationFrame(() => { R.raf = 0; MR.stickScroll(() => render(false)); }); };
   const shorten = (t) => MR.esc(t.length > 90 ? t.slice(0, 90) + '...' : t);
-  line('search', '<b>Search</b> ' + shorten(q), 'spin');
+  /* the model stopped thinking (its answer began, or the turn ended): still the swirl and say how long it took */
+  const endThinking = () => {
+    if (!R.think.classList.contains('live')) return;
+    R.think.classList.remove('live');
+    const secs = Math.max(1, Math.round((performance.now() - R.thinkT0) / 1000));
+    MR.$('.t-label', R.think).textContent = 'Thought for ' + secs + 's';
+  };
+  // Research with no library ticked searches only the web, so the turn opens on the web line instead
+  if (!(opts.research && !opts.libraries)) line('search', '<b>Search</b> ' + shorten(q), 'spin');
+  if (opts.research) line('web', '<b class="web">Web research</b> planning the searches', 'spin');
 
   const onEvent = (ev) => {
     switch (ev.type) {
@@ -248,13 +276,26 @@ MR.beginTurn = function (q, opts = {}) {
         break;
       case 'rewrite': sub('as a standalone question: <b>' + MR.esc(ev.query) + '</b>'); break;
       case 'expand': sub('also searching: ' + ev.queries.map((x) => MR.esc(x)).join(' &middot; ')); break;
+      case 'web_search':                                 // the model chose what to look up on the web
+        line('web', '<b class="web">Web research</b> ' + ev.queries.map((x) => '&ldquo;' + shorten(x) + '&rdquo;').join(' &middot; '), 'spin');
+        break;
       case 'sources': {
         R.srcs = ev.sources;
-        const libsN = new Set(ev.sources.map((s) => s.library_id)).size;
+        const lib = ev.sources.filter((s) => s.kind !== 'web'), web = ev.sources.filter((s) => s.kind === 'web');
+        const libsN = new Set(lib.map((s) => s.library_id)).size;
         const d = ev.debug || {};
-        line('search', '<b>Search</b> ' + shorten(q), 'done');
-        sub(`${ev.sources.length} passages from ${libsN} ${libsN === 1 ? 'library' : 'libraries'} &middot; vector ${d.vector_hits ?? '-'} + keyword ${d.keyword_hits ?? '-'} candidates &middot; ${d.timing_ms ? MR.fmt.secs(d.timing_ms.total) : ''}${d.reranked ? ' &middot; reranked' : ''}`);
-        if (d.pending) sub('<span class="warn">' + MR.fmt.n(d.pending) + ' passages are still being embedded, so semantic matching is partial.</span>');
+        if (R.lines.search) {
+          line('search', '<b>Search</b> ' + shorten(q), 'done');
+          sub(`${lib.length} passages from ${libsN} ${libsN === 1 ? 'library' : 'libraries'} &middot; vector ${d.vector_hits ?? '-'} + keyword ${d.keyword_hits ?? '-'} candidates &middot; ${d.timing_ms ? MR.fmt.secs(d.timing_ms.total) : ''}${d.reranked ? ' &middot; reranked' : ''}`);
+          if (d.pending) sub('<span class="warn">' + MR.fmt.n(d.pending) + ' passages are still being embedded, so semantic matching is partial.</span>');
+        }
+        if (d.web) {
+          const w = d.web, ok = web.length > 0;
+          if (R.lines.web) line('web', R.lines.web.querySelector('.body').innerHTML, ok ? 'done' : 'err');
+          const domains = [...new Set(web.map((s) => s.library))].slice(0, 4).map((x) => MR.esc(x)).join(', ');
+          sub(ok ? `${web.length} web ${web.length === 1 ? 'page' : 'pages'} (${w.pages || 0} read in full) via ${MR.esc(w.engine || 'the web')}${domains ? ' &middot; ' + domains : ''}`
+                 : '<span class="warn">no web results' + (w.error ? ': ' + MR.esc(w.error) : '') + '</span>');
+        }
         MR.renderSources(R, turn);
         break;
       }
@@ -268,9 +309,17 @@ MR.beginTurn = function (q, opts = {}) {
         }
         break;
       }
-      case 'thinking':
-        R.thinking += ev.text; R.think.hidden = false; MR.$('.t-body', R.think).textContent = R.thinking; break;
+      case 'thinking': {
+        R.thinking += ev.text; R.think.hidden = false;
+        if (!replay && !R.thinkT0) { R.thinkT0 = performance.now(); R.think.classList.add('live'); }
+        const tb = MR.$('.t-body', R.think);
+        const stickT = tb.scrollHeight - tb.scrollTop - tb.clientHeight < 24;   // follow the stream unless the reader scrolled up
+        tb.textContent = R.thinking;
+        if (stickT) tb.scrollTop = tb.scrollHeight;
+        break;
+      }
       case 'token':
+        endThinking();
         if (!replay && S.ctx.loading) { S.ctx.loading = false; MR.updateGauge(); }
         R.text += ev.text; R.chars += ev.text.length;
         if (!replay && R.est) { S.ctx.used = R.est + R.chars / 3.6; MR.updateGauge(); }
@@ -295,6 +344,7 @@ MR.beginTurn = function (q, opts = {}) {
   /* after the last event: stop the spinners, draw the final answer and the line of figures under it */
   const finish = () => {
     cancelAnimationFrame(R.raf); R.raf = 0;
+    endThinking();
     MR.$$('.spin', turn).forEach((s) => { s.parentElement.innerHTML = R.stopped ? '■' : '✓'; });
     if (replay) render(true); else MR.stickScroll(() => render(true));
     if (R.text.trim()) {
@@ -316,8 +366,11 @@ MR.beginTurn = function (q, opts = {}) {
 /* a saved turn (from the history) drawn again: its trace events, then the answer, then the closing figures */
 MR.replayTurn = function (t) {
   const when = new Date(t.created * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const T = MR.beginTurn(t.question, { replay: true, model: t.model, when });
-  const early = ['rewrite', 'expand', 'sources', 'context'];
+  const ev = t.events || [];
+  const src = (ev.find((e) => e.type === 'sources') || {}).sources || [];
+  const T = MR.beginTurn(t.question, { replay: true, model: t.model, when, research: ev.some((e) => e.type === 'web_search'),
+                                       libraries: src.filter((s) => s.kind !== 'web').length });
+  const early = ['rewrite', 'expand', 'web_search', 'sources', 'context'];
   (t.events || []).filter((e) => early.includes(e.type)).forEach(T.onEvent);
   if (t.answer) T.onEvent({ type: 'status', text: 'generating' });
   if (t.thinking) T.onEvent({ type: 'thinking', text: t.thinking });
@@ -332,16 +385,17 @@ MR.ask = async function (q) {
   const S = MR.S;
   if (S.streaming) return;
   if (!S.profile) { MR.openConnect(); return; }
-  const libs = Array.from(S.selected);
-  if (!libs.length) { MR.toast('Select at least one library in the sidebar first.', 'err'); return; }
+  const libs = Array.from(S.selected), research = !!S.research;
+  if (!libs.length && !research) { MR.toast('Select a library in the sidebar first, or turn on Research to search the web.', 'err'); return; }
   MR._lastQ = q;
-  const T = MR.beginTurn(q), R = T.R;
+  const T = MR.beginTurn(q, { research, libraries: libs.length }), R = T.R;
   S.chat.turns += 1;
   MR.renderViewTabs();
   S.streaming = true; S.ctx.loading = true; MR.updateGauge(); MR.updateScope(); MR.startSpin();
   S.abort = new AbortController();
   try {
-    await MR.stream({ question: q, history: S.history.slice(-8), libraries: libs, profile_id: S.profile.id, chat_id: S.chat.id }, T.onEvent, S.abort.signal);
+    await MR.stream({ question: q, history: S.history.slice(-8), libraries: libs, profile_id: S.profile.id, chat_id: S.chat.id, research },
+      T.onEvent, S.abort.signal);
   } catch (e) {
     if (e.name === 'AbortError') { R.stopped = true; }
     else { R.errored = true; T.line('gen', MR.esc(e.message), 'err'); }
@@ -364,6 +418,16 @@ MR.renderSources = function (R, turn) {
   if (!R.srcs.length) return;
   R.sources.hidden = false;
   R.sources.innerHTML = '<div class="label">Sources</div><div class="cards">' + R.srcs.map((s) => {
+    if (s.kind === 'web') {                          // a page found by Research: its site, its address, what was read of it
+      let path = s.online_url || '';
+      try { const u = new URL(s.online_url); path = (u.pathname + u.search).replace(/\/$/, '') || '/'; } catch (e) { /* keep as is */ }
+      return `<div class="card web" data-n="${s.n}">
+        <div class="c-head"><span class="c-n">[${s.n}]</span><span class="c-title" title="${MR.esc(s.title)}">${MR.esc(s.title)}</span><span class="tag web">web</span></div>
+        <div class="c-path" title="${MR.esc(s.online_url || '')}">${MR.esc(s.library)}<span class="faint">${MR.esc(path)}</span></div>
+        <div class="c-snip">${MR.esc(s.snippet)}</div>
+        <div class="c-foot"><span>${MR.esc(s.library)}</span>
+          ${s.online_url ? `<a href="${MR.esc(s.online_url)}" target="_blank" rel="noopener noreferrer">open page &#8599;</a>` : ''}</div></div>`;
+    }
     const code = s.kind === 'code', r = MR.rangeOf(s.anchor);
     const title = code ? s.title + (r ? ':' + (r[0] === r[1] ? r[0] : r[0] + '-' + r[1]) : '') : s.title;
     const crumb = (s.heading.startsWith(s.title + ' > ') ? s.heading.slice(s.title.length + 3) : s.heading) || s.library;

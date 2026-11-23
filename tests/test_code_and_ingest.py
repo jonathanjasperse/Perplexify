@@ -194,6 +194,18 @@ class PureHelpers(unittest.TestCase):
         self.assertEqual(sorted(a.rsplit("/", 1)[1] for a in assets), ["f.ico", "i.png", "j.js", "s.css"])
         self.assertFalse(any(p.startswith(("mailto", "javascript")) for p in pages))
 
+    def test_heading_permalinks_stay_out_of_titles_and_headings(self):
+        from perplexify.loaders.html import _parse
+
+        html = ('<html><body><div class="body"><h1>5. Data Structures<a class="headerlink" href="#ds">¶</a></h1>'
+                '<h2>5.1. More on Lists<a class="header-anchor" href="#l">#</a></h2>'
+                '<p>The list data type has some more methods. Here are all of the methods of list objects.</p>'
+                '</div></body></html>').encode()
+        doc = _parse(html, "datastructures")
+        self.assertEqual(doc.title, "5. Data Structures")
+        headings = [c.heading for c in chunk_document(doc)]
+        self.assertTrue(headings and all("¶" not in h and "#" not in h for h in headings), headings)
+
     def test_excerpts_show_code_with_path_lines_and_language(self):
         code = Hit("l", "Lib", 1, 1, "src/foo.cpp", "u", "src/foo.cpp > ns > Foo::bar", "L12-L20", "int bar() { return 1; }",
                    "external", "p", "code", lang="cpp")

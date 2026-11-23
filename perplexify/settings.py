@@ -334,6 +334,12 @@ class Settings:
                 self._data["active_profile"] = ids[0] if ids else None
             self.save()
 
+    def service_key(self, service: str) -> str:
+        """A key saved for a service that is not a chat model (Voyage embeddings, Tavily / Brave web search).
+        They share the encrypted `embedding_keys` store, which predates the web search keys."""
+        with self._lock:
+            return osutil.unprotect(self._data["embedding_keys"].get(service, ""))
+
     def set_embedding_key(self, provider_id: str, key: str) -> None:
         with self._lock:
             token = osutil.protect(key.strip()) if key.strip() else ""

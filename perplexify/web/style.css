@@ -4,9 +4,12 @@
           outlines, one light primary button, one teal accent for what is selected or active.
    light: neutral grey surfaces (never white, never yellow), near-black text, one muted terracotta accent, dark primary button.
    Type: a normal, light proportional UI font (the system's own, like ChatGPT and Claude use). Monospace is kept
-   only for real code. Rules for both themes: flat surfaces, 1px hairlines, radius 8px (controls) and 12px (cards,
-   dialogs), no shadows, glows or gradients. Deliberate exceptions, asked for in kind: a highlighted source card
-   blooms white around it, and the microphone breathes while it listens (see the --glow / --rec-pulse tokens).
+   only for real code. Rules for both themes: quiet surfaces, 1px hairlines, radius 8px (controls) and 14px (cards,
+   dialogs). Raised surfaces (cards, dialogs, menus, the question box, the thinking card) carry a faint sheen:
+   transparent white fading top to bottom, with a 1px highlight along the top edge (--glass-* / --sheen-*). Only what
+   floats above the page (dialogs, menus, popovers, toasts) casts a soft shadow (--shadow-pop). Deliberate
+   exceptions, asked for in kind: a highlighted source card blooms white around it, and the microphone breathes while
+   it listens (see the --glow / --rec-pulse tokens).
    Where to change the look: the colour tokens just below (one set per theme), then --r / --r-lg for the corners. */
 
 :root {
@@ -20,7 +23,9 @@
   --read-lh: 1.65;
   --r: 8px;            /* buttons, inputs, chips, cards in lists */
   --r-sm: 4px;         /* tags, key caps, inline code */
-  --r-lg: 12px;        /* dialogs, popovers, panels */
+  --swirl-a: 0deg;     /* each thinking dot's angle on its orbit (set per dot) */
+  --r-lg: 14px;        /* dialogs, popovers, panels */
+  --ease: cubic-bezier(0.2, 0, 0, 1);   /* hovers and small state changes */
   --top-h: 52px;
   --side-w: 312px;     /* wide enough for "5 pages  260 passages  ~61k tokens" on one line */
 }
@@ -43,6 +48,8 @@
   --faint: #92949a;
   --accent: #3fb8cc;
   --accent-wash: rgba(63, 184, 204, 0.14);
+  --accent-inv: #ef8a70;         /* the inverse of the accent (teal -> coral): the web in Research mode, its citations and sources */
+  --accent-inv-wash: rgba(239, 138, 112, 0.14);
   --on-accent: #04181c;
   --primary: #dee0e4;            /* the one light button */
   --on-primary: #16171b;
@@ -56,6 +63,15 @@
   --glow: 0 0 18px rgba(255, 255, 255, 0.16), 0 0 4px rgba(255, 255, 255, 0.12);      /* the bloom on a highlighted source card */
   --glow-soft: 0 0 12px rgba(255, 255, 255, 0.10);                                    /* it fades to this; also the hover glow */
   --rec-pulse: 238, 128, 120;        /* the microphone's halo while it listens (--err as an rgb() triplet, for rgba()) */
+  --glass-top: rgba(255, 255, 255, 0.075);   /* the thinking card: transparent white, fading top to bottom */
+  --glass-bottom: rgba(255, 255, 255, 0.015);
+  --glass-line: rgba(255, 255, 255, 0.08);
+  --glass-shine: rgba(255, 255, 255, 0.06);
+  --sheen-top: rgba(255, 255, 255, 0.035);   /* the same sheen, fainter, laid over a filled surface (cards, dialogs) */
+  --sheen-bottom: rgba(255, 255, 255, 0);
+  --shadow-pop: 0 18px 48px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);   /* dialogs, menus, toasts */
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.25);                                  /* the question box at rest */
+  --ring: 0 0 0 3px rgba(63, 184, 204, 0.16);                                    /* focus halo: --accent, faint */
 }
 
 :root[data-theme="light"] {
@@ -74,6 +90,8 @@
   --faint: #5a5e66;
   --accent: #874430;
   --accent-wash: rgba(135, 68, 48, 0.12);
+  --accent-inv: #255e6f;         /* the inverse of the accent (terracotta -> deep teal) */
+  --accent-inv-wash: rgba(37, 94, 111, 0.12);
   --on-accent: #ffffff;
   --primary: #26282c;
   --on-primary: #f4f5f6;
@@ -87,6 +105,15 @@
   --glow: 0 0 14px rgba(255, 255, 255, 0.9), 0 0 3px rgba(255, 255, 255, 0.8);        /* white reads on the grey page too */
   --glow-soft: 0 0 10px rgba(255, 255, 255, 0.6);
   --rec-pulse: 152, 47, 38;
+  --glass-top: rgba(255, 255, 255, 0.72);
+  --glass-bottom: rgba(255, 255, 255, 0.22);
+  --glass-line: rgba(255, 255, 255, 0.6);
+  --glass-shine: rgba(255, 255, 255, 0.9);
+  --sheen-top: rgba(255, 255, 255, 0.45);
+  --sheen-bottom: rgba(255, 255, 255, 0);
+  --shadow-pop: 0 18px 48px rgba(32, 34, 38, 0.18), 0 2px 8px rgba(32, 34, 38, 0.1);
+  --shadow-soft: 0 1px 2px rgba(32, 34, 38, 0.08);
+  --ring: 0 0 0 3px rgba(135, 68, 48, 0.14);
 }
 
 * { box-sizing: border-box; }
@@ -214,6 +241,12 @@ mark {
   white-space: nowrap;
 }
 .btn:hover:not(:disabled) { background: var(--hover); }
+/* every control eases into its hover / chosen state instead of snapping */
+.btn, .icon-btn, .chip, .seg button, .viewtabs button, .tabs button, .suggestions button, .model-chip, .prov,
+.menu button, .slash button, .mic-btn, .input, .promptbox, .sv-input, .lib, .thinking summary {
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease), box-shadow 0.2s var(--ease);
+}
+.btn:active:not(:disabled), .icon-btn:active, .chip:active { transform: translateY(0.5px); }
 .btn:disabled, .btn.primary:disabled { cursor: default; color: var(--faint); background: var(--btn); border-color: var(--btn-line); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 520; }
 .btn.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
@@ -232,7 +265,7 @@ mark {
   color: var(--text);
   font-size: 13.5px;
 }
-.input:focus-visible { outline: 0; border-color: var(--accent); }
+.input:focus-visible { outline: 0; border-color: var(--accent); box-shadow: var(--ring); }
 textarea.input { font-family: var(--mono); font-size: 12.5px; }
 .input::placeholder { color: var(--faint); }
 select.input { appearance: none; padding-right: 26px; background-image: none; }
@@ -331,9 +364,9 @@ input.input, select.input { height: 36px; }
 .column { width: min(860px, 100% - 48px); margin: 0 auto; }
 
 .welcome { padding: 18px 0; }
-.welcome h1 { margin: 0 0 8px; font-family: var(--head); font-size: 24px; font-weight: 500; letter-spacing: -0.012em; }
+.welcome h1 { margin: 0 0 10px; font-family: var(--head); font-size: 27px; font-weight: 560; letter-spacing: -0.022em; line-height: 1.2; }
 .welcome p { margin: 0 0 10px; color: var(--muted); max-width: 64ch; font-family: var(--read); font-size: calc(var(--read-size) - 0.5px); line-height: 1.55; }
-.welcome .steps { margin: 18px 0; display: grid; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); overflow: hidden; }
+.welcome .steps { margin: 20px 0; display: grid; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); overflow: hidden; }
 .welcome .step { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); }
 .welcome .step:first-child { border-top: 0; }
 .welcome .step .n { color: var(--faint); width: 22px; }
@@ -348,7 +381,7 @@ input.input, select.input { height: 36px; }
 .turn { margin: 0 0 26px; }
 .turn.user .prompt-line { display: flex; gap: 10px; align-items: baseline; }
 .turn.user .caret { color: var(--accent); font-weight: 600; }
-.turn.user .utext { font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.turn.user .utext { font-family: var(--head); font-size: 16px; font-weight: 500; letter-spacing: -0.008em; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .trace { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
 .trace .ln { display: flex; gap: 8px; line-height: 1.7; align-items: baseline; }
 .trace .dot { color: var(--accent); width: 12px; flex: none; text-align: center; }
@@ -385,10 +418,62 @@ input.input, select.input { height: 36px; }
 .cite { font-family: var(--sans); font-size: 0.8em; font-weight: 560; color: var(--accent); background: transparent; border: 0; padding: 0 1px; vertical-align: baseline; cursor: pointer; }
 .cite::before { content: "["; } .cite::after { content: "]"; }
 .cite:hover { text-decoration: underline; }
+.cite.web { color: var(--accent-inv); }                  /* a web page found by Research */
 .cursor { display: inline-block; width: 0.5em; height: 1.05em; background: var(--accent); vertical-align: text-bottom; margin-left: 2px; animation: blink 1.05s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
-.thinking { margin: 0 0 12px; border-left: 2px solid var(--line-strong); padding: 2px 0 2px 12px; color: var(--muted); font-size: 0.9em; max-height: 9em; overflow: auto; white-space: pre-wrap; font-family: var(--read); }
-.thinking summary { cursor: pointer; font-family: var(--sans); font-size: 12px; color: var(--faint); }
+/* the model's thinking: a rounded glass card, transparent white fading top to bottom, with a swirl of three accent dots while it thinks */
+.thinking {
+  margin: 0 0 14px; border-radius: var(--r-lg); overflow: hidden;
+  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-shine);
+}
+.thinking summary {
+  display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; user-select: none;
+  list-style: none; font-family: var(--sans); font-size: 12.5px; font-weight: 500; color: var(--muted);
+}
+.thinking summary::-webkit-details-marker { display: none; }
+.thinking summary:hover { color: var(--text); }
+.thinking .t-label { flex: none; }    /* only as wide as its text, so the glimmer spends its whole pass on the word */
+.thinking .t-chev { width: 7px; height: 7px; margin: 0 2px 0 auto; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.2s ease; opacity: 0.7; }
+.thinking[open] .t-chev { transform: rotate(45deg) translate(-2px, -2px); }
+.thinking .t-body {
+  padding: 2px 14px 12px 38px; max-height: 14em; overflow: auto; white-space: pre-wrap;
+  font-family: var(--read); font-size: 0.88em; line-height: 1.6; color: var(--muted);
+}
+/* while thinking: a glimmer sweeps across the label from left to right, a bright band with an accent edge.
+   The gradient is twice the label's width, so moving it from 150% to -50% carries the band from just off the
+   left edge to just off the right one; the pause at the end of each pass keeps it a glimmer, not a strobe. */
+.thinking.live .t-label {
+  background: linear-gradient(90deg, var(--faint) 0%, var(--faint) 38%, var(--accent) 44%, var(--text) 50%, var(--accent) 56%, var(--faint) 62%, var(--faint) 100%);
+  background-size: 200% 100%; background-position: 150% 0;   /* tiled, so the text is always covered while the band is off either edge */
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: think-glimmer 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;   /* a slow, unhurried pass */
+}
+@keyframes think-glimmer {
+  0%       { background-position: 150% 0; }
+  75%, 100% { background-position: -50% 0; }
+}
+
+/* three dots orbiting a centre, breathing in and out as they turn; at rest they settle into a small still triangle */
+.swirl { position: relative; flex: none; width: 14px; height: 14px; }
+.swirl i {
+  position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%;
+  background: var(--accent); opacity: 0.55;
+  transform: rotate(var(--swirl-a)) translateY(-4px);
+}
+.swirl i:nth-child(1) { --swirl-a: 0deg; }
+.swirl i:nth-child(2) { --swirl-a: 120deg; }
+.swirl i:nth-child(3) { --swirl-a: 240deg; }
+.thinking.live .swirl { animation: swirl-turn 1.4s cubic-bezier(0.55, 0.1, 0.45, 0.9) infinite; }
+.thinking.live .swirl i { opacity: 1; box-shadow: 0 0 6px var(--accent); animation: swirl-breathe 1.4s ease-in-out infinite; }
+.thinking.live .swirl i:nth-child(2) { animation-delay: -0.23s; }
+.thinking.live .swirl i:nth-child(3) { animation-delay: -0.46s; }
+@keyframes swirl-turn { to { transform: rotate(360deg); } }
+@keyframes swirl-breathe {
+  0%, 100% { transform: rotate(var(--swirl-a)) translateY(-5px) scale(1); }
+  50%      { transform: rotate(calc(var(--swirl-a) + 40deg)) translateY(-1.5px) scale(0.65); }
+}
 .turn .foot { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--faint); align-items: center; }
 .turn .foot button { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 0; }
 .turn .foot button:hover { color: var(--text); text-decoration: underline; }
@@ -401,7 +486,7 @@ input.input, select.input { height: 36px; }
 .cards { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 12px 10px; min-width: 0;
         transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background-color 0.22s ease; }
-:root[data-theme="light"] .card { background: var(--raise); }
+:root[data-theme="light"] .card { background-color: var(--raise); }
 /* The source-card highlight: the card grows a touch and blooms white — hovered, it does so quietly; when a citation
    [n] in the answer points at it, the flash below swells it and lets the glow breathe out again (see card-flash). */
 .card:hover { transform: scale(1.015); border-color: var(--line-strong); box-shadow: var(--glow-soft); z-index: 2; }
@@ -421,6 +506,35 @@ input.input, select.input { height: 36px; }
 .card .c-foot { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; font-size: 12px; color: var(--faint); }
 .card .c-foot a, .card .c-foot button { color: var(--accent); border: 0; background: transparent; padding: 0; font-size: 12px; text-decoration: none; }
 .card .c-foot a:hover, .card .c-foot button:hover { text-decoration: underline; }
+/* web pages from Research wear the inverse accent: number, tag, link and the flash when a citation points at one */
+.card.web .c-n, .card.web .c-foot a { color: var(--accent-inv); }
+.card.web .c-path::before { content: none; }
+.card.web .c-path .faint { margin-left: 1px; }
+.tag.web { color: var(--accent-inv); border-color: var(--accent-inv); }
+.card.web.flash, :root[data-theme="light"] .card.web.flash { border-color: var(--accent-inv); background: var(--accent-inv-wash); }
+.trace b.web { color: var(--accent-inv); }
+.hintbar #scope.web { color: var(--accent-inv); }
+
+/* the Research switch in the question box: a tick box and a globe; on, it takes the inverse accent */
+.research-btn {
+  flex: none; align-self: flex-end; height: 36px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 12px 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent;
+  color: var(--muted); font-size: 12.5px; font-weight: 500;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.research-btn:hover { color: var(--text); background: var(--hover); }
+.research-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.research-btn .r-box {
+  width: 13px; height: 13px; border-radius: 4px; border: 1.5px solid currentColor; opacity: 0.8;
+  display: grid; place-items: center; transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.research-btn[aria-pressed="true"] { color: var(--accent-inv); border-color: var(--accent-inv); background: var(--accent-inv-wash); }
+.research-btn[aria-pressed="true"] .r-box { background: var(--accent-inv); border-color: var(--accent-inv); opacity: 1; }
+.research-btn[aria-pressed="true"] .r-box::after {
+  content: ""; width: 3.5px; height: 7px; margin-top: -1.5px;
+  border: solid var(--bg); border-width: 0 1.6px 1.6px 0; transform: rotate(45deg);
+}
+@media (max-width: 560px) { .research-btn > span:last-child { display: none; } }
 
 /* ---------------------------------------------------------------- manual search view */
 .sv { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
@@ -435,7 +549,7 @@ input.input, select.input { height: 36px; }
 .facets { display: flex; flex-wrap: wrap; gap: 6px; }
 .sv-results { flex: 1 1 auto; overflow: auto; padding: 14px 0 28px; }
 .hit { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 11px 14px 11px; margin: 0 0 10px; min-width: 0; }
-:root[data-theme="light"] .hit { background: var(--raise); }
+:root[data-theme="light"] .hit { background-color: var(--raise); }
 .hit .h-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .hit .h-n { color: var(--faint); font-size: 12px; min-width: 18px; }
 .hit .h-title { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
@@ -463,7 +577,8 @@ input.input, select.input { height: 36px; }
 .promptbox, .sv-input { display: flex; gap: 10px; background: var(--raise); border: 1px solid transparent; border-radius: 28px; padding: 7px 7px 7px 22px;}
 .promptbox { align-items: flex-end; }
 .sv-input { align-items: center; }
-.promptbox:focus-within, .sv-input:focus-within { border-color: var(--accent); }
+.promptbox, .sv-input { background-image: linear-gradient(180deg, var(--sheen-top), var(--sheen-bottom)); box-shadow: var(--shadow-soft), inset 0 1px 0 var(--glass-line); }
+.promptbox:focus-within, .sv-input:focus-within { border-color: var(--accent); box-shadow: var(--ring), var(--shadow-soft); }
 .promptbox textarea, .sv-input input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 15px; line-height: 24px; padding: 0; margin: 0; }
 .promptbox textarea { resize: none; min-height: 36px; max-height: 200px; padding: 6px 0; }
 .sv-input input { height: 36px; }
@@ -517,8 +632,12 @@ input.input, select.input { height: 36px; }
 .vgap { padding: 4px 14px; color: var(--faint); font-style: italic; font-family: var(--sans); }
 
 /* ---------------------------------------------------------------- dialogs */
-.overlay { position: fixed; inset: 0; background: var(--overlay); display: grid; place-items: center; z-index: 20; padding: 20px; }
-.modal { width: min(760px, 100%); max-height: calc(100vh - 40px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-lg); overflow: hidden; }
+.overlay { position: fixed; inset: 0; background: var(--overlay); display: grid; place-items: center; z-index: 20; padding: 20px;
+           -webkit-backdrop-filter: blur(6px) saturate(1.1); backdrop-filter: blur(6px) saturate(1.1); animation: fade-in 0.16s ease-out; }
+.modal { width: min(760px, 100%); max-height: calc(100vh - 40px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-lg); overflow: hidden;
+         box-shadow: var(--shadow-pop), inset 0 1px 0 var(--glass-line); animation: rise-in 0.22s var(--ease); }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
 .modal.narrow { width: min(520px, 100%); }
 .modal .m-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .modal .m-head h2 { margin: 0; font-family: var(--head); font-size: 16px; font-weight: 500; letter-spacing: -0.005em; }
@@ -558,14 +677,23 @@ input.input, select.input { height: 36px; }
 .group .pline .grow { flex: 1; min-width: 0; }
 .popover { position: fixed; z-index: 30; width: 330px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-lg); padding: 12px 14px; font-size: 12.5px; }
 .popover h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); font-weight: 500; }
-.menu { position: fixed; z-index: 30; min-width: 190px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r); padding: 4px 0; font-size: 13px; overflow: hidden; }
-.menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 6px 14px; }
+.menu { position: fixed; z-index: 30; min-width: 190px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px; padding: 4px; font-size: 13px; overflow: hidden; }
+.menu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 6px; background: transparent; padding: 6px 10px; }
 .menu button:hover { background: var(--hover); }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 #toast-root { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 40; }
 .toast { background: var(--panel); border: 1px solid var(--line-strong); border-left: 3px solid var(--accent); border-radius: var(--r); padding: 8px 12px; font-size: 12.5px; max-width: 380px; }
 .toast.err { border-left-color: var(--err); }
 .toast.ok { border-left-color: var(--ok); }
+.toast { animation: rise-in 0.22s var(--ease); }
+
+/* the sheen on raised surfaces: transparent white fading downwards, laid over each surface's own colour,
+   with a 1px highlight on the top edge; floating layers also cast --shadow-pop */
+.card, .hit, .welcome .steps, .modal, .popover, .menu, .toast, .slash, .prov, .group, .callout {
+  background-image: linear-gradient(180deg, var(--sheen-top), var(--sheen-bottom));
+}
+.card, .hit, .welcome .steps { box-shadow: inset 0 1px 0 var(--glass-line); }
+.popover, .menu, .toast, .slash { box-shadow: var(--shadow-pop), inset 0 1px 0 var(--glass-line); }
 
 * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
 
@@ -579,6 +707,7 @@ input.input, select.input { height: 36px; }
   .brand .ver { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin, .mic-btn.listening, .card.flash { animation: none; }
+  .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin, .mic-btn.listening, .card.flash,
+  .thinking.live .swirl, .thinking.live .swirl i, .thinking.live .t-label, .overlay, .modal, .toast { animation: none; }
   .ring .arc, .bar > i, .card, .card:hover { transition: none; transform: none; }
 }

@@ -28,7 +28,8 @@ DROP_TAGS = ["script", "style", "noscript", "svg", "iframe", "template", "form",
              "textarea", "canvas", "audio", "video", "picture", "object", "embed", "map", "link", "meta"]
 _DROP_SET = set(DROP_TAGS)
 CHROME_TAGS = {"nav", "footer", "aside"}
-SKIP_CLASSES = {"permalink", "dynheader", "dyncontent", "navpath", "memSeparator", "ttc", "lineno",
+SKIP_CLASSES = {"permalink", "headerlink", "header-anchor", "hash-link", "anchorjs-link", "heading-anchor",  # the ¶ / # beside headings (Sphinx, VitePress, Docusaurus, ...)
+                "dynheader", "dyncontent", "navpath", "memSeparator", "ttc", "lineno",
                 "juce-site-chrome", "site-header", "site-footer", "yoast-breadcrumbs", "wp-block-navigation",
                 "skip-link", "screen-reader-text", "sr-only", "toc", "breadcrumbs", "breadcrumb", "navigation"}
 SKIP_IDS = {"nav-path", "side-nav", "MSearchBox", "MSearchSelectWindow", "MSearchResultsWindow", "titlearea", "top", "toc"}

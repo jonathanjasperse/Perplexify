@@ -30,6 +30,12 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["library", "path"], "properties": {
          "library": {"type": "string"}, "path": {"type": "string", "description": "File path as shown in search results"},
          "start_line": {"type": "integer", "default": 1}, "end_line": {"type": "integer"}}}},
+    {"name": "web_search",
+     "description": "Search the web and read the best pages. Returns numbered excerpts with each page's title and URL, "
+                    "for citing. Uses Tavily or Brave Search when a key is saved in Perplexify, else DuckDuckGo.",
+     "inputSchema": {"type": "object", "required": ["query"], "properties": {
+         "query": {"type": "string", "description": "What to search for, as you would type it into a search engine"},
+         "max_pages": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}}}},
 ]
 
 
@@ -73,6 +79,22 @@ class Handler:
                 break
             out.append(block)
         return "\n\n".join(out)
+
+    def web_search(self, a: dict) -> str:
+        from . import websearch
+
+        hits, info = websearch.research([a["query"]], self.ctx.settings, per_query=int(a.get("max_pages") or 5),
+                                        max_pages=int(a.get("max_pages") or 5), chars_per_page=2500, question=a["query"])
+        if not hits:
+            return "No web results."
+        out, size = [], 0
+        for i, h in enumerate(hits, 1):
+            block = f"[{i}] {h.title}\nurl: {h.uri}\n{h.text}"
+            size += len(block)
+            if size > MAX_TEXT and out:
+                break
+            out.append(block)
+        return "\n\n".join(out) + f"\n\n(searched with {info.get('engine') or 'the web'})"
 
     def read_source(self, a: dict) -> str:
         lib = self.ctx.libs.get(a["library"]) or next((x for x in self.ctx.libs.list() if x.name.lower() == a["library"].lower()), None)

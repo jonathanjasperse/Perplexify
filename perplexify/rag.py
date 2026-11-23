@@ -6,7 +6,7 @@ import re
 import time
 from typing import Iterator
 
-from . import providers
+from . import providers, websearch
 from .embeddings import EmbeddingError
 from .llm import LLMError, make_provider
 from .retrieval import Hit
@@ -30,6 +30,19 @@ You are given numbered excerpts of source code and documentation retrieved from 
 2. Cite excerpts inline with bracketed numbers like [1] or [2][4]. When you point at code, also give its file path and line range as shown in the excerpt header, for example `src/Foo.cpp:120-148`.
 3. Quote code exactly as written, including namespaces and signatures. Put code in fenced code blocks with the language.
 4. Explain how the pieces fit together when the question needs it, but stay direct and concise."""
+
+SYSTEM_PROMPT_RESEARCH = """You are a careful research assistant. Today is {today}.
+
+You are given numbered excerpts: pages found on the web for this question{and_libraries}. Follow these rules:
+1. Answer from the excerpts. You may add widely known background, but every specific fact, figure, date or quote must come from an excerpt.
+2. Cite inline with bracketed numbers like [1] or [2][4], right after the statement they support. Cite the most direct source.
+3. When sources disagree or are dated, say so and prefer the most recent, authoritative one.
+4. If the excerpts do not answer the question, say what is missing instead of guessing.
+5. Be direct and well organised: a short answer first, then the details. Use headings or bullet points only when they help."""
+
+WEB_PLAN_SYSTEM = ("You plan web searches for a research assistant. Given a question, write 1 to 3 web search queries that "
+                   "together find the facts needed to answer it: specific, with the names, versions and dates that matter, "
+                   "the way you would type them into a search engine. One query per line, no numbering, no commentary.")
 
 REWRITE_SYSTEM = ("You rewrite a follow-up question into one standalone search query for a documentation and source code "
                   "search engine. Keep class, function, file and parameter names exactly as written. "
@@ -80,12 +93,22 @@ def line_range(anchor: str | None) -> str:
 
 def format_excerpt(n: int, h: Hit, body: str) -> str:
     """How one passage is shown to the model. Code gets a path:lines header and a fenced block."""
+    if h.kind == "web":
+        return f"[{n}] {h.title} ({h.uri})\n{body}"
     if h.kind == "code":
         lines = line_range(h.anchor)
         symbol = h.heading[len(h.title) + 3:] if h.heading.startswith(h.title + " > ") else ""
         head = f"[{n}] {h.title}" + (f":{lines}" if lines else "") + (f"  ({symbol})" if symbol else "")
         return f"{head}\n```{h.lang}\n{body}\n```"
     return f"[{n}] {h.heading}\n{body}"
+
+
+def interleave(first: list[Hit], second: list[Hit]) -> list[Hit]:
+    """Alternate two best-first lists (web pages and library passages), so a tight budget keeps the best of both."""
+    out: list[Hit] = []
+    for i in range(max(len(first), len(second))):
+        out += [x[i] for x in (first, second) if i < len(x)]
+    return out
 
 
 def build_excerpts(hits: list[Hit], budget_tokens: int) -> tuple[str, list[Hit]]:
@@ -129,9 +152,32 @@ class RagEngine:
         lines = [re.sub(r"^[\-\*\d\.\)\s]+", "", ln).strip() for ln in out.splitlines()]
         return [ln for ln in lines if 3 <= len(ln) <= 300][:3]
 
+    def _plan_web(self, provider, question: str) -> list[str]:
+        """The model decides what to look up: 1-3 web search queries for the (standalone) question."""
+        out = provider.complete([{"role": "user", "content": f"Today is {time.strftime('%Y-%m-%d')}.\n\nQuestion: {question}"}],
+                                WEB_PLAN_SYSTEM)
+        out = re.sub(r"<think>.*?</think>", "", out, flags=re.S)
+        lines = [re.sub(r"^[\-\*\d\.\)\s]+", "", ln).strip().strip('"') for ln in out.splitlines()]
+        return list(dict.fromkeys(ln for ln in lines if 3 <= len(ln) <= 300))[:3]
+
+    def _web_research(self, provider, question: str) -> Iterator[dict]:
+        """Plan the searches with the model, run them and read the pages. Yields trace events; the last one is
+        {"type": "_web", "hits": [...], "info": {...}}, which the caller keeps to itself."""
+        try:
+            queries = self._plan_web(provider, question) or [question]
+        except LLMError:
+            queries = [question]
+        yield {"type": "web_search", "queries": queries}
+        try:
+            hits, info = websearch.research(queries, self.ctx.settings, question=question)
+        except websearch.WebSearchError as e:
+            yield {"type": "notice", "kind": "info", "text": str(e)}
+            hits, info = [], {"engine": "", "results": 0, "pages": 0, "error": str(e)}
+        yield {"type": "_web", "hits": hits, "info": info}
+
     # ------------------------------------------------------------------ main entry
     def answer_stream(self, question: str, history: list[dict], library_ids: list[str],
-                      profile_id: str | None = None, overrides: dict | None = None) -> Iterator[dict]:
+                      profile_id: str | None = None, overrides: dict | None = None, *, research: bool = False) -> Iterator[dict]:
         t0 = time.perf_counter()
         settings = self.ctx.settings
         question = question.strip()
@@ -142,8 +188,8 @@ class RagEngine:
         if profile is None or not settings.can_chat(profile):
             yield {"type": "error", "message": NO_MODEL, "code": "no_model"}
             return
-        if not library_ids:
-            yield {"type": "error", "message": "Select at least one library in the sidebar to search."}
+        if not library_ids and not research:
+            yield {"type": "error", "message": "Select at least one library in the sidebar to search, or turn on Research to search the web."}
             return
         retr = {**settings.retrieval(), **(overrides or {})}
         provider = make_provider(profile, settings.api_key(profile))
@@ -165,7 +211,8 @@ class RagEngine:
             # 1. a standalone search query (follow-ups like "and what about its parameters?")
             queries = [question]
             yield {"type": "status", "text": "searching"}
-            if engine is not None and ((history and retr["query_rewrite"]) or retr["multi_query"]):
+            needs_model = (history and retr["query_rewrite"]) or (library_ids and retr["multi_query"]) or research
+            if engine is not None and needs_model:
                 yield from self._wait_for_engine(engine, model_name)      # the helper calls below already need it
             if history and retr["query_rewrite"]:
                 try:
@@ -175,7 +222,7 @@ class RagEngine:
                         yield {"type": "rewrite", "query": q}
                 except LLMError:
                     pass
-            if retr["multi_query"]:
+            if library_ids and retr["multi_query"]:
                 try:
                     extra = self._expand(provider, queries[0])
                     if extra:
@@ -184,10 +231,21 @@ class RagEngine:
                 except LLMError:
                     pass
 
-            # 2. hybrid search
-            hits, debug = self.ctx.retriever.search(
-                queries, library_ids, top_k=retr["top_k"], candidates=retr["candidates"],
-                max_per_doc=retr["max_per_doc"], rerank=retr["rerank"], reranker_model=retr["reranker_model"])
+            # 2. hybrid search of the libraries, and in Research mode the web (the model plans those searches)
+            hits: list[Hit] = []
+            debug: dict = {}
+            if library_ids:
+                hits, debug = self.ctx.retriever.search(
+                    queries, library_ids, top_k=retr["top_k"], candidates=retr["candidates"],
+                    max_per_doc=retr["max_per_doc"], rerank=retr["rerank"], reranker_model=retr["reranker_model"])
+            if research:
+                web_hits: list[Hit] = []
+                for ev in self._web_research(provider, queries[0]):
+                    if ev["type"] == "_web":
+                        web_hits, debug["web"] = ev["hits"], ev["info"]
+                    else:
+                        yield ev
+                hits = interleave(web_hits, hits)
 
             # 3. fit passages into the context window
             if engine is not None:
@@ -195,15 +253,16 @@ class RagEngine:
                 info = provider.info()                     # the window the engine really has (it was asked for the one in Settings)
                 window = int(info.get("context_window") or window)
             excerpt_budget = min(int(retr["max_excerpt_tokens"]), int(window * (0.5 if local else 0.55)))
-            prompt = self._prompt(question, history, hits, window, excerpt_budget, local)
+            prompt = self._prompt(question, history, hits, window, excerpt_budget, local, research)
             if local:
-                prompt = self._fit_local(provider, question, history, hits, window, excerpt_budget, prompt)
+                prompt = self._fit_local(provider, question, history, hits, window, excerpt_budget, prompt, research)
             used = prompt["used"]
             debug["excerpt_budget"] = prompt["budget"]
             yield {"type": "sources", "sources": [h.to_public(i + 1) for i, h in enumerate(used)],
                    "retrieved": len(hits), "debug": debug}
             if not used:
-                msg = "I couldn't find anything relevant in the selected libraries."
+                msg = ("I couldn't find anything relevant on the web" + (" or in the selected libraries." if library_ids else ".")
+                       if research else "I couldn't find anything relevant in the selected libraries.")
                 if debug.get("pending"):
                     msg += f" {debug['pending']} passages are still waiting to be embedded, so search quality is reduced until indexing finishes."
                 yield {"type": "token", "text": msg}
@@ -245,15 +304,21 @@ class RagEngine:
 
     # ------------------------------------------------------------------ the prompt, and the local model that has to hold it
     @staticmethod
-    def _prompt(question: str, history: list[dict], hits: list[Hit], window: int, budget: int, local: bool) -> dict:
+    def _prompt(question: str, history: list[dict], hits: list[Hit], window: int, budget: int, local: bool,
+                research: bool = False) -> dict:
         """System text, messages and the passages that fit into `budget` tokens of excerpts. A local model gets a little less
         of the window for excerpts and conversation: its tokenizer is unknown here, and the answer needs room too."""
         excerpts, used = build_excerpts(hits, budget)
         if not used:
             return {"used": [], "budget": budget}
-        names = ", ".join(dict.fromkeys(h.library_name for h in used))
-        code_share = sum(h.kind == "code" for h in used) / len(used)
-        system = (SYSTEM_PROMPT_CODE if code_share >= 0.4 else SYSTEM_PROMPT).format(manuals=names)
+        if research and any(h.kind == "web" for h in used):
+            libs = ", ".join(dict.fromkeys(h.library_name for h in used if h.kind != "web"))
+            system = SYSTEM_PROMPT_RESEARCH.format(today=time.strftime("%A %d %B %Y"),
+                                                   and_libraries=f", and passages from the user's own libraries ({libs})" if libs else "")
+        else:
+            names = ", ".join(dict.fromkeys(h.library_name for h in used))
+            code_share = sum(h.kind == "code" for h in used) / len(used)
+            system = (SYSTEM_PROMPT_CODE if code_share >= 0.4 else SYSTEM_PROMPT).format(manuals=names)
         hist = trim_history(history, int(window * (0.12 if local else 0.15)))
         user_msg = f"Excerpts:\n\n{excerpts}\n\nQuestion: {question}"
         messages = hist + [{"role": "user", "content": user_msg}]
@@ -261,7 +326,8 @@ class RagEngine:
                      "excerpts": estimate_tokens(excerpts), "question": estimate_tokens(question)}
         return {"used": used, "budget": budget, "system": system, "messages": messages, "breakdown": breakdown}
 
-    def _fit_local(self, provider, question: str, history: list[dict], hits: list[Hit], window: int, budget: int, prompt: dict) -> dict:
+    def _fit_local(self, provider, question: str, history: list[dict], hits: list[Hit], window: int, budget: int, prompt: dict,
+                   research: bool = False) -> dict:
         """Count the prompt with the engine's own tokenizer and take passages out until it fits the window with room left for the
         answer (about 15% of the window, at least 384 tokens). The estimate (3.6 characters per token) is only a guess for a
         model whose tokenizer we do not know; a prompt that is too long is refused by the engine."""
@@ -284,7 +350,7 @@ class RagEngine:
             if target < 250:
                 return prompt
             budget = int(min(budget * 0.9, target))
-            prompt = self._prompt(question, history, hits, window, budget, True)
+            prompt = self._prompt(question, history, hits, window, budget, True, research)
         return prompt
 
     @staticmethod
