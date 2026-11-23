@@ -7,7 +7,7 @@
     1. runs the unit tests
     2. stages a self-contained copy of the app in installer\build\stage:
          the pinned embeddable Python, every package in requirements.txt, the app itself,
-         the built-in embedding model, the icon and the licence notices
+         the built-in embedding and reranking models, the llama.cpp engine for local models, the icon and the licence notices
     3. runs the self-test against that staged copy, offline
     4. compiles it into one installer with Inno Setup
 
@@ -261,22 +261,39 @@ try {
     Copy-Item -LiteralPath $Ico -Destination (Join-Path $Stage 'app.ico') -Force
 
     # ------------------------------------------------------------------ embedding model
-    Step "Embedding model $($Pins.embedding_model)"
-    $ModelCache = Join-Path $Cache ('models-' + ($Pins.embedding_model -replace '[^A-Za-z0-9.-]', '_'))
-    $haveModel = (Test-Path -LiteralPath $ModelCache) -and (@(Get-ChildItem -LiteralPath $ModelCache -Recurse -File -Filter '*.onnx').Count -gt 0)
+    Step "Models: embedding $($Pins.embedding_model), reranking $($Pins.reranker_model)"
+    $ModelCache = Join-Path $Cache ('models-' + (($Pins.embedding_model + '+' + $Pins.reranker_model) -replace '[^A-Za-z0-9.+-]', '_'))
+    # two models: the one that embeds passages and the cross-encoder that reranks them (reranking is on by default, so it ships too)
+    $haveModel = (Test-Path -LiteralPath $ModelCache) -and (@(Get-ChildItem -LiteralPath $ModelCache -Recurse -File -Filter '*.onnx').Count -ge 2)
     if (-not $haveModel) {
         if (Test-Path -LiteralPath $ModelCache) { Remove-Item -LiteralPath $ModelCache -Recurse -Force }
-        Info 'downloading (about 65 MB, once)'
-        Run $RuntimePy @('-P', '-m', 'perplexify', 'download-model', '--dest', $ModelCache, '--model', $Pins.embedding_model)
+        Info 'downloading (about 90 MB, once)'
+        Run $RuntimePy @('-P', '-m', 'perplexify', 'download-model', '--dest', $ModelCache, '--model', $Pins.embedding_model, '--reranker', $Pins.reranker_model)
     } else { Info 'cached' }
     Mirror $ModelCache (Join-Path $Stage 'models')
 
+    # ------------------------------------------------------------------ local model engine (llama.cpp)
+    Step "Local model engine: llama.cpp $($Pins.llama.version) (build $($Pins.llama.tag))"
+    # `perplexify download-llama` downloads the pinned zip (the `llama` block of pins.json: tag, url, SHA-256), checks its SHA-256,
+    # unpacks it, removes what is not needed and starts llama-server once to prove it runs. Nothing about the engine is downloaded
+    # when the app runs. The zip is cached in installer\cache\downloads and the unpacked result in installer\cache\llama-<tag>,
+    # so later builds do not download again; a new tag in pins.json starts afresh.
+    $LlamaCache = Join-Path $Cache "llama-$($Pins.llama.tag)"
+    if (-not (Test-Path -LiteralPath (Join-Path $LlamaCache 'llama-server.exe'))) {
+        if (Test-Path -LiteralPath $LlamaCache) { Remove-Item -LiteralPath $LlamaCache -Recurse -Force }
+        Run $RuntimePy @('-P', '-X', 'utf8', '-m', 'perplexify', 'download-llama', '--pins', (Join-Path $Here 'pins.json'),
+                         '--dest', $LlamaCache, '--cache', (Join-Path $Cache 'downloads'))
+    } else { Info 'cached' }
+    Mirror $LlamaCache (Join-Path $Stage 'llama')
+    $LlamaFiles = @(Get-ChildItem -LiteralPath (Join-Path $Stage 'llama') -File)
+    Info ("{0} files, {1:N0} MB (it picks the best CPU variant of your PC at run time and uses the graphics card through Vulkan when it can)" -f $LlamaFiles.Count, (($LlamaFiles | Measure-Object Length -Sum).Sum / 1MB))
+
     # ------------------------------------------------------------------ licences
     Step 'Licence notices'
-    Run $BuildPy @((Join-Path $Here 'scripts\make_notices.py'), $Site, (Join-Path $Stage 'THIRD-PARTY-NOTICES.txt'), $Pins.embedding_model)
+    Run $BuildPy @((Join-Path $Here 'scripts\make_notices.py'), $Site, (Join-Path $Stage 'THIRD-PARTY-NOTICES.txt'), $Pins.embedding_model, $Pins.reranker_model, (Join-Path $Stage 'llama'))
 
     # whatever an older build left in the stage that is no longer part of the product
-    $expected = 'runtime', 'app', 'models', 'app.ico', 'THIRD-PARTY-NOTICES.txt'
+    $expected = 'runtime', 'app', 'models', 'llama', 'app.ico', 'THIRD-PARTY-NOTICES.txt'
     foreach ($item in @(Get-ChildItem -LiteralPath $Stage -Force | Where-Object { $expected -notcontains $_.Name })) {
         Info "removing stale $($item.Name)"
         Remove-Item -LiteralPath $item.FullName -Recurse -Force

@@ -10,6 +10,7 @@ const MR = {
     profiles: [], profile: null, catalog: [], embedders: [], presets: [], settings: null,
     jobs: [], dismissed: new Set(),
     history: [],            // [{role, content}] sent with each question so follow-ups work
+    chat: { id: null, title: '', turns: 0 },    // the saved conversation on screen (see history.js); id is null until its first answer is saved
     streaming: false, abort: null,
     ctx: { window: 0, used: 0, breakdown: null, source: '', maxContext: null, maxOutput: null, actual: false, loading: false },
   },

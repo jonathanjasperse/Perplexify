@@ -211,6 +211,22 @@ def run(skip_embed: bool = False) -> int:
             raise AssertionError("foreign Host headers must be refused")
         return f"{len(b['libraries'])} library, UI page {len(page.content) // 1024} KB, host guard works"
 
+    def local_engine():
+        """The llama.cpp engine behind local models starts and reports its version. Running from the source without it is not a
+        failure (it is fetched with `download-llama`); an installation without it is, because the installer ships it."""
+        from . import localllm
+
+        eng = localllm.locate_engine()
+        if eng is None:
+            if localllm.installed_layout():
+                raise AssertionError(f"the llama.cpp engine is missing from the installation (expected {localllm.engine_search_dirs()[-2][1]})")
+            return "not installed (running from the source: local models need `python -m perplexify download-llama`)"
+        version = localllm.engine_version(eng)
+        if not version:
+            raise AssertionError(f"{eng.exe} does not run (llama-server --version failed)")
+        gpu = ", ".join(localllm.gpu_backends(eng.dir)) or "CPU only"
+        return f"llama.cpp {version} from {eng.dir} ({eng.source}; {gpu})"
+
     check("runtime", python_info)
     check("sqlite full-text search", sqlite_fts5)
     check("code grammars", grammars)
@@ -220,6 +236,7 @@ def run(skip_embed: bool = False) -> int:
     if not skip_embed:
         check("built-in embeddings + hybrid search", embed_and_search)
     check("web app", web_app)
+    check("local engine", local_engine)
     check("app window", window_support)
 
     width = max(len(n) for n, _, _ in results)

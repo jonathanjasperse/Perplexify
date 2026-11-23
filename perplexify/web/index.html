@@ -7,6 +7,9 @@
 <title>Perplexify</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2316171b'/%3E%3Cpath d='M16 8 5 10v13l11-2 11 2V10z' fill='%23e3e4e8'/%3E%3Cpath d='M9 24l4 2-4 2zm6 3h6v2h-6z' fill='%233fb8cc'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="history.css">
+<link rel="stylesheet" href="bookmarks.css">
+<link rel="stylesheet" href="local.css">
 <script>
   // choose the theme before the first paint so there is no flash
   (function () {
@@ -31,6 +34,8 @@
     <div class="transcript" id="transcript" aria-live="polite"></div>
     <div class="composer" id="composer"></div>
     <section class="sv" id="searchview" hidden></section>
+    <section class="sv" id="bookmarksview" hidden></section>
+    <section class="sv" id="historyview" hidden></section>
     <section class="viewer" id="viewer" hidden></section>
   </main>
 </div>
@@ -40,7 +45,10 @@
 <script src="js/shell.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/search.js"></script>
+<script src="js/history.js"></script>
+<script src="js/bookmarks.js"></script>
 <script src="js/dialogs.js"></script>
+<script src="js/local.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

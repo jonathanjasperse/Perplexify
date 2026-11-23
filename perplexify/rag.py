@@ -6,6 +6,7 @@ import re
 import time
 from typing import Iterator
 
+from . import providers
 from .embeddings import EmbeddingError
 from .llm import LLMError, make_provider
 from .retrieval import Hit
@@ -37,7 +38,8 @@ EXPAND_SYSTEM = ("You help search technical documentation and source code. Given
                  "search queries that use different wording and the identifiers (class, function, file or setting names) "
                  "most likely to appear in the material. One query per line, no numbering, no commentary.")
 
-NO_MODEL = "No model is connected yet. Open Settings > Models and paste an API key for ChatGPT, Claude, Gemini or DeepSeek."
+NO_MODEL = ("No model is connected yet. Open Settings > Models and paste an API key for ChatGPT, Claude, Gemini or DeepSeek, "
+            "or choose a local model that runs on this computer.")
 
 
 def _history_text(history: list[dict], limit_chars: int = 1800) -> str:
@@ -137,7 +139,7 @@ class RagEngine:
             yield {"type": "error", "message": "Type a question first."}
             return
         profile = settings.profile(profile_id)
-        if profile is None or not settings.api_key(profile):
+        if profile is None or not settings.can_chat(profile):
             yield {"type": "error", "message": NO_MODEL, "code": "no_model"}
             return
         if not library_ids:
@@ -145,17 +147,26 @@ class RagEngine:
             return
         retr = {**settings.retrieval(), **(overrides or {})}
         provider = make_provider(profile, settings.api_key(profile))
+        local = providers.is_local(profile)      # a model on this computer: it may have to be loaded first, and its window is small
         info: dict = {}
-        try:
-            info = self.ctx.llm_info(profile)
-        except Exception:  # noqa: BLE001 - the gauge is informative, never critical
-            pass
+        if not local:
+            try:
+                info = self.ctx.llm_info(profile)
+            except Exception:  # noqa: BLE001 - the gauge is informative, never critical
+                pass
         window = int(info.get("context_window") or profile.get("context_tokens") or 128_000)
 
         try:
+            # A local model is started in the background right away (loading a large one takes up to a minute). The search below
+            # carries on meanwhile; wherever the model is needed first the answer waits for it and says so ("status" events).
+            engine = provider.begin() if local else None
+            model_name = str(profile.get("model") or "local model")
+
             # 1. a standalone search query (follow-ups like "and what about its parameters?")
             queries = [question]
             yield {"type": "status", "text": "searching"}
+            if engine is not None and ((history and retr["query_rewrite"]) or retr["multi_query"]):
+                yield from self._wait_for_engine(engine, model_name)      # the helper calls below already need it
             if history and retr["query_rewrite"]:
                 try:
                     q = self._rewrite(provider, question, history)
@@ -179,9 +190,16 @@ class RagEngine:
                 max_per_doc=retr["max_per_doc"], rerank=retr["rerank"], reranker_model=retr["reranker_model"])
 
             # 3. fit passages into the context window
-            excerpt_budget = min(int(retr["max_excerpt_tokens"]), int(window * 0.55))
-            excerpts, used = build_excerpts(hits, excerpt_budget)
-            debug["excerpt_budget"] = excerpt_budget
+            if engine is not None:
+                yield from self._wait_for_engine(engine, model_name)
+                info = provider.info()                     # the window the engine really has (it was asked for the one in Settings)
+                window = int(info.get("context_window") or window)
+            excerpt_budget = min(int(retr["max_excerpt_tokens"]), int(window * (0.5 if local else 0.55)))
+            prompt = self._prompt(question, history, hits, window, excerpt_budget, local)
+            if local:
+                prompt = self._fit_local(provider, question, history, hits, window, excerpt_budget, prompt)
+            used = prompt["used"]
+            debug["excerpt_budget"] = prompt["budget"]
             yield {"type": "sources", "sources": [h.to_public(i + 1) for i, h in enumerate(used)],
                    "retrieved": len(hits), "debug": debug}
             if not used:
@@ -192,16 +210,9 @@ class RagEngine:
                 yield {"type": "done", "elapsed_ms": round((time.perf_counter() - t0) * 1000)}
                 return
 
-            names = ", ".join(dict.fromkeys(h.library_name for h in used))
-            code_share = sum(h.kind == "code" for h in used) / len(used)
-            system = (SYSTEM_PROMPT_CODE if code_share >= 0.4 else SYSTEM_PROMPT).format(manuals=names)
-            hist = trim_history(history, int(window * 0.15))
-            user_msg = f"Excerpts:\n\n{excerpts}\n\nQuestion: {question}"
-            messages = hist + [{"role": "user", "content": user_msg}]
-            breakdown = {"system": estimate_tokens(system), "history": sum(estimate_tokens(m["content"]) for m in hist),
-                         "excerpts": estimate_tokens(excerpts), "question": estimate_tokens(question)}
+            system, messages, breakdown = prompt["system"], prompt["messages"], prompt["breakdown"]
             yield {"type": "context", "window": window, "max_context": info.get("max_context"),
-                   "estimated_prompt": sum(breakdown.values()), "breakdown": breakdown,
+                   "estimated_prompt": prompt.get("real_tokens") or sum(breakdown.values()), "breakdown": breakdown,
                    "model": profile.get("model"), "provider": profile.get("provider")}
 
             # 4. stream the answer
@@ -226,7 +237,65 @@ class RagEngine:
             yield {"type": "done", "elapsed_ms": round((time.perf_counter() - t0) * 1000),
                    "tokens_per_s": round(out_tokens / gen_s, 1)}
         except (LLMError, EmbeddingError, RuntimeError) as e:
-            yield {"type": "error", "message": str(e)}
+            code = getattr(e, "code", None)           # a local model problem says what to offer: engine_missing, model_missing, ...
+            yield {"type": "error", "message": str(e), **({"code": code} if code else {})}
         except Exception as e:  # noqa: BLE001
             log.exception("chat failed")
             yield {"type": "error", "message": f"Unexpected error: {type(e).__name__}: {e}"}
+
+    # ------------------------------------------------------------------ the prompt, and the local model that has to hold it
+    @staticmethod
+    def _prompt(question: str, history: list[dict], hits: list[Hit], window: int, budget: int, local: bool) -> dict:
+        """System text, messages and the passages that fit into `budget` tokens of excerpts. A local model gets a little less
+        of the window for excerpts and conversation: its tokenizer is unknown here, and the answer needs room too."""
+        excerpts, used = build_excerpts(hits, budget)
+        if not used:
+            return {"used": [], "budget": budget}
+        names = ", ".join(dict.fromkeys(h.library_name for h in used))
+        code_share = sum(h.kind == "code" for h in used) / len(used)
+        system = (SYSTEM_PROMPT_CODE if code_share >= 0.4 else SYSTEM_PROMPT).format(manuals=names)
+        hist = trim_history(history, int(window * (0.12 if local else 0.15)))
+        user_msg = f"Excerpts:\n\n{excerpts}\n\nQuestion: {question}"
+        messages = hist + [{"role": "user", "content": user_msg}]
+        breakdown = {"system": estimate_tokens(system), "history": sum(estimate_tokens(m["content"]) for m in hist),
+                     "excerpts": estimate_tokens(excerpts), "question": estimate_tokens(question)}
+        return {"used": used, "budget": budget, "system": system, "messages": messages, "breakdown": breakdown}
+
+    def _fit_local(self, provider, question: str, history: list[dict], hits: list[Hit], window: int, budget: int, prompt: dict) -> dict:
+        """Count the prompt with the engine's own tokenizer and take passages out until it fits the window with room left for the
+        answer (about 15% of the window, at least 384 tokens). The estimate (3.6 characters per token) is only a guess for a
+        model whose tokenizer we do not know; a prompt that is too long is refused by the engine."""
+        room = window - max(384, int(window * 0.15))
+        for _ in range(3):
+            if not prompt["used"]:
+                return prompt
+            text = "\n".join([prompt["system"]] + [m["content"] for m in prompt["messages"]])
+            counted = provider.count_tokens(text)
+            if counted is None:
+                return prompt                                  # the engine cannot say: keep the estimate
+            real = counted + 16 * (len(prompt["messages"]) + 1)  # + what the chat template adds around every message
+            prompt["real_tokens"] = real
+            if real <= room:
+                return prompt
+            est = sum(prompt["breakdown"].values())
+            ratio = real / max(est, 1)                         # how far the estimate was off
+            fixed = est - prompt["breakdown"]["excerpts"]
+            target = (room - fixed * ratio) / ratio            # what is left for excerpts, in estimated tokens
+            if target < 250:
+                return prompt
+            budget = int(min(budget * 0.9, target))
+            prompt = self._prompt(question, history, hits, window, budget, True)
+        return prompt
+
+    @staticmethod
+    def _wait_for_engine(attempt, model_name: str) -> Iterator[dict]:
+        """Wait for a local model that is still loading. A "status" event every second keeps the interface informed (and lets a
+        closed connection be noticed); raises when the model could not be started."""
+        if attempt.done.is_set():
+            attempt.result()
+            return
+        yield {"type": "status", "text": "loading_model", "model": model_name, "seconds": 0}
+        while not attempt.done.wait(1.0):
+            yield {"type": "status", "text": "loading_model", "model": model_name, "seconds": attempt.seconds}
+        handle = attempt.result()
+        yield {"type": "status", "text": "model_ready", "model": model_name, "seconds": attempt.seconds, "n_ctx": handle.n_ctx}

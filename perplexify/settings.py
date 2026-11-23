@@ -21,18 +21,26 @@ REASONING = (None, "off", "low", "medium", "high", "max")
 DEFAULT_EMBEDDER = {"provider": "fastembed", "model": "BAAI/bge-small-en-v1.5"}
 
 RETRIEVAL_DEFAULTS: dict[str, Any] = {
-    "top_k": 8,                   # passages handed to the model
-    "candidates": 40,             # candidates pulled from each of vector search and keyword search
-    "max_per_doc": 3,             # at most this many passages from one page / file
-    "max_excerpt_tokens": 12000,  # hard cap on excerpt size
-    "rerank": False,              # cross-encoder reranking (downloads a small model on first use)
+    "top_k": 30,                  # passages handed to the model
+    "candidates": 20,             # candidates pulled from each of vector search and keyword search
+    "max_per_doc": 10,            # at most this many passages from one page / file
+    "max_excerpt_tokens": 30000,  # hard cap on excerpt size (also capped by the model's window)
+    "rerank": True,               # cross-encoder reranking (the small model ships with the installer)
     "reranker_model": "Xenova/ms-marco-MiniLM-L-6-v2",
     "query_rewrite": True,        # turn follow-up questions into standalone search queries
-    "multi_query": False,         # ask the model for extra search phrasings (one more model call)
+    "multi_query": True,          # ask the model for extra search phrasings (one more model call)
 }
 
+# Earlier default sets. The settings file stores every value it was saved with, so a file that still holds one of these
+# complete sets was never customised: it follows the current defaults instead of freezing yesterday's.
+PREVIOUS_RETRIEVAL_DEFAULTS: tuple[dict[str, Any], ...] = (
+    {"top_k": 8, "candidates": 40, "max_per_doc": 3, "max_excerpt_tokens": 12000, "rerank": False, "query_rewrite": True, "multi_query": False},
+    {"top_k": 10, "candidates": 20, "max_per_doc": 10, "max_excerpt_tokens": 30000, "rerank": True, "query_rewrite": True, "multi_query": True},
+)
+
 PROFILE_FIELDS = ("name", "provider", "kind", "base_url", "model", "context_tokens", "temperature", "max_tokens",
-                  "reasoning", "effort", "show_thinking", "use_env_key")
+                  "reasoning", "effort", "show_thinking", "use_env_key", "model_path", "gpu")
+GPU_MODES = ("auto", "off")     # local models: let llama.cpp use the graphics card when it can, or never
 
 
 def default_settings() -> dict:
@@ -44,6 +52,7 @@ def default_settings() -> dict:
         "embedder": dict(DEFAULT_EMBEDDER),
         "embedding_keys": {},
         "server": {"port": 8765, "open_browser": True},
+        "local": {"linked": []},     # .gguf files the user chose from elsewhere on the disk (used where they are)
     }
 
 
@@ -84,7 +93,14 @@ def sanitize_profile(p: dict) -> dict:
         e = p.get("effort") or None
         out["effort"] = e if e in EFFORTS else None
         out["show_thinking"] = bool(p.get("show_thinking"))
-    if p.get("api_key_enc"):
+    if providers.is_local(provider_id):
+        # a model file on this computer: no server address, no key, no reasoning option; the engine is started on demand
+        out["base_url"] = ""
+        out["use_env_key"] = False
+        out["reasoning"] = None
+        out["model_path"] = str(p.get("model_path") or "").strip()
+        out["gpu"] = p.get("gpu") if p.get("gpu") in GPU_MODES else "auto"
+    elif p.get("api_key_enc"):
         out["api_key_enc"] = p["api_key_enc"]
     return out
 
@@ -101,6 +117,14 @@ def _clean_retrieval(r: dict) -> dict:
         "query_rewrite": bool(r.get("query_rewrite", d["query_rewrite"])),
         "multi_query": bool(r.get("multi_query", d["multi_query"])),
     }
+
+
+def _clean_local(d: dict) -> dict:
+    linked: list[str] = []
+    for p in d.get("linked") or []:
+        if isinstance(p, str) and p.strip() and p.strip() not in linked:
+            linked.append(p.strip())
+    return {"linked": linked[:200]}
 
 
 def clean_embedder(e: dict) -> dict:
@@ -133,13 +157,18 @@ class Settings:
             data["profiles"] = [sanitize_profile(p) for p in raw["profiles"]
                                 if isinstance(p, dict) and p.get("provider") in {x["id"] for x in providers.CHAT_PROVIDERS}]
         if isinstance(raw.get("retrieval"), dict):
-            data["retrieval"] = _clean_retrieval({**data["retrieval"], **raw["retrieval"]})
+            stored = _clean_retrieval({**data["retrieval"], **raw["retrieval"]})
+            if any(all(stored[k] == v for k, v in old.items()) for old in PREVIOUS_RETRIEVAL_DEFAULTS):
+                stored = dict(RETRIEVAL_DEFAULTS)
+            data["retrieval"] = stored
         if isinstance(raw.get("embedder"), dict):
             data["embedder"] = clean_embedder(raw["embedder"])
         if isinstance(raw.get("embedding_keys"), dict):
             data["embedding_keys"] = {k: v for k, v in raw["embedding_keys"].items() if isinstance(v, str)}
         if isinstance(raw.get("server"), dict):
             data["server"].update({k: raw["server"][k] for k in ("port", "open_browser") if k in raw["server"]})
+        if isinstance(raw.get("local"), dict):
+            data["local"] = _clean_local(raw["local"])
         ids = [p["id"] for p in data["profiles"]]
         ap = raw.get("active_profile")
         data["active_profile"] = ap if ap in ids else (ids[0] if ids else None)
@@ -166,12 +195,19 @@ class Settings:
         d = self.get()
         for p in d["profiles"]:
             env = providers.env_key(p["provider"])
-            p["has_key"] = bool(p.pop("api_key_enc", "")) or bool(p.get("use_env_key") and env)
+            # "has_key" is what the interface reads as "connected": a local model needs no key, so it always counts
+            p["has_key"] = bool(p.pop("api_key_enc", "")) or bool(p.get("use_env_key") and env) or providers.is_local(p)
         d["embedding_keys"] = {k: True for k, v in d["embedding_keys"].items() if v}
         return d
 
+    def can_chat(self, profile: dict | None) -> bool:
+        """Is this profile usable for a question? Cloud providers need a key; a local model needs nothing but its file."""
+        if not profile:
+            return False
+        return providers.is_local(profile) or bool(self.api_key(profile))
+
     def is_ready(self) -> bool:
-        return any(self.api_key(p) for p in self.get()["profiles"])
+        return any(self.can_chat(p) for p in self.get()["profiles"])
 
     def profile(self, profile_id: str | None = None) -> dict | None:
         with self._lock:
@@ -237,6 +273,37 @@ class Settings:
             self._data["active_profile"] = pid
             self.save()
             return copy.deepcopy(profile)
+
+    def connect_local(self, model: str, model_path: str = "", context_tokens: int | None = None, gpu: str = "auto") -> dict:
+        """Create or update the "Local model" profile and make it the active one. `model` is the file name the app shows;
+        `model_path` is where the file is when it is not in the app's own model folder (a file the user chose)."""
+        with self._lock:
+            existing = next((p for p in self._data["profiles"] if p["id"] == "local"), {})
+            merged = dict(existing)
+            merged.update({"id": "local", "provider": "local", "model": model, "model_path": model_path,
+                           "context_tokens": context_tokens, "gpu": gpu})
+            profile = sanitize_profile(merged)
+            self._data["profiles"] = [p for p in self._data["profiles"] if p["id"] != "local"] + [profile]
+            self._data["active_profile"] = "local"
+            self.save()
+            return copy.deepcopy(profile)
+
+    def linked_models(self) -> list[str]:
+        with self._lock:
+            return list(self._data["local"]["linked"])
+
+    def link_model(self, path: str) -> None:
+        """Remember a .gguf file that stays where it is (it is never copied)."""
+        with self._lock:
+            if path not in self._data["local"]["linked"]:
+                self._data["local"]["linked"].append(path)
+                self.save()
+
+    def unlink_model(self, path: str) -> None:
+        with self._lock:
+            if path in self._data["local"]["linked"]:
+                self._data["local"]["linked"].remove(path)
+                self.save()
 
     def remove_profile(self, profile_id: str) -> None:
         with self._lock:

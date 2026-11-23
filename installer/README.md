@@ -9,7 +9,9 @@
 <install folder>                       %LOCALAPPDATA%\Programs\Perplexify  (or Program Files for "all users")
   runtime\                             the python.org embeddable Python 3.12 + Lib\site-packages (all dependencies)
   app\perplexify\                       the app's own files (what you edit in this repository)
-  models\                              the built-in embedding model; copied to the user's data folder on first use
+  models\                              the built-in embedding model and the reranking model (reranking is on by default);
+                                       copied to the user's data folder on first use
+  llama\                               llama.cpp, the engine for local models: llama-server.exe and its DLLs (see "Local models")
   app.ico                              the icon of the shortcuts
   THIRD-PARTY-NOTICES.txt              licences of everything bundled
 %LOCALAPPDATA%\Perplexify\              user data: libraries, settings (API keys encrypted with Windows DPAPI), logs
@@ -45,7 +47,8 @@ Two Microsoft runtimes are installed only when the PC lacks them, each with Wind
 | App | mirrors `perplexify\` into `stage\app\perplexify` |
 | Icon | `python -m perplexify.icon --ico` draws the icon (no image files are stored in the repository) |
 | Model | `python -m perplexify download-model` fetches the embedding model once into `cache\`, then copies it into the stage |
-| Notices | `scripts\make_notices.py` collects the licence text of every bundled package |
+| Engine | `python -m perplexify download-llama --pins installer\pins.json` fetches the llama.cpp build pinned in `pins.json` (`llama`: tag, URL, size, SHA-256) into `cache\downloads`, checks the SHA-256 (a mismatch deletes the file and stops the build), unpacks it, removes what the server does not need, starts `llama-server.exe --version` once, and keeps the result in `cache\llama-<tag>`; that is mirrored into `stage\llama` |
+| Notices | `scripts\make_notices.py` collects the licence text of every bundled package, and of llama.cpp (`licenses\llama.cpp.txt` plus the licence files in `stage\llama`) |
 | Compile | `compileall` byte-compiles everything so the first start is fast and the install folder can be read-only |
 | Self-test | `python -m perplexify selftest` against the staged copy with `HF_HUB_OFFLINE=1`: import, keyword and meaning search, the web app, and that the window's libraries (pywebview, pythonnet, WebView2 control) load |
 | VC++ runtime | downloads `vc_redist.x64.exe` and checks its Microsoft signature |
@@ -70,10 +73,52 @@ Switches: `-Fast` (quick compression), `-Clean` (start from nothing), `-SkipTest
   sha256 of its source archive, to `source-only-requirements.txt` and the build makes its wheel.
 - **Embedding model**: `embedding_model` in `pins.json` (it must also be the model the app uses by default,
   `DEFAULT_EMBEDDER` in `perplexify/settings.py`).
+- **llama.cpp version**: the `llama` block of `pins.json` (tag, asset name, URL, size, SHA-256 from the release's asset
+  list on GitHub), plus the equal copy `EMBEDDED_PIN` in `perplexify/localllm.py` (the installed app has no `installer`
+  folder; `tests/test_local.py` fails when the two differ). Then run the unit tests and check the new engine by hand as
+  described under "Local models" below. Rebuild: the cache folder is named after the tag, so the new build is fetched.
 - **Name and publisher**: `app` in `pins.json`.
 - **Installer wizard, shortcuts, tasks, uninstall behaviour**: `Perplexify.iss`.
 - **AppId** in `Perplexify.iss` identifies the product for upgrades and uninstalling. Never change it once you have
   shipped a version, and never reuse it for another product.
+
+## Local models (llama.cpp)
+
+Local models run through `llama-server.exe` from the official llama.cpp release. The installer ships it in `<install
+folder>\llama`; the app never downloads it by itself (a developer running from the source can press *Download engine* or run
+`python -m perplexify download-llama`, which fetch the same pinned build into `%LOCALAPPDATA%\Perplexify\llama`). The app looks
+for it, in this order, in `PERPLEXIFY_LLAMA_DIR`, in `llama` next to the app, and in `<data folder>\llama`.
+
+- **Which build.** `v1.0.0`, the release llama.cpp itself calls stable (it has no files of its own; its `nightly-tag.txt` names
+  build `b12359`), asset `llama-b12359-bin-win-vulkan-x64.zip`, 38,090,643 bytes, SHA-256 `e8d18c6e...a0d5e` (the digest GitHub
+  shows for the asset; pinned in `pins.json` and checked after every download). The binaries report `version: 1.0.0-dev (build
+  12359, commit b1b770d90)`, the commit the tag points at.
+- **Why the Vulkan build.** One program and no graphics-card detection of our own: this zip contains the CPU back end in
+  fourteen variants (the engine picks the one that fits the processor when it starts: a plain x64 build up to ones for AVX-512 and newer processors) and
+  `ggml-vulkan.dll`, which uses any graphics card with a Vulkan driver (NVIDIA, AMD, Intel) and quietly does nothing on a PC
+  without one. Measured: the CPU-only zip is 25.1 MB, the Vulkan zip 38.1 MB (13.0 MB more); after the build drops the
+  command line tools the engine needs 86 MB on disk (the Vulkan DLL is 42 MB of it); a solid LZMA run over those files, the way
+  Inno Setup compresses, gives about 14 MB in the installer, of which the Vulkan part is only about 4 MB (an estimate: the
+  real figure is the difference between two installer builds). Prompts built from 20 or more passages are thousands of
+  tokens, and reading them is where a graphics card helps most, so it is worth it. (CUDA builds are 180 to 430 MB.)
+- **What the build keeps.** Only `llama-server.exe`, the DLLs it imports (found by reading the import tables, so a future build
+  cannot lose one by accident), the `ggml*.dll` back ends and the licence files. The command line tools in the zip are removed.
+  `llama-server.exe --version` is run once at build time and again by `test-install.ps1` and the self-test.
+- **Licences.** llama.cpp is MIT (Copyright The ggml authors); the zip carries no licence file for it, so
+  `installer\licenses\llama.cpp.txt` has the texts (llama.cpp, cpp-httplib, nlohmann/json, copied from the source at tag
+  b12359, with a note on the public-domain headers); the LLVM OpenMP licence in the zip (`LICENSE-LLVM-OpenMP`) is kept next to
+  `libomp.dll`. `make_notices.py` puts all of it into `THIRD-PARTY-NOTICES.txt`.
+- **Process.** The app starts one `llama-server.exe` on demand (first question), bound to 127.0.0.1 on a free port behind a
+  random per-run key, without a console window, at below-normal priority, with its output in
+  `%LOCALAPPDATA%\Perplexify\logs\llama-server.log`. It lives in a Windows job object with `KILL_ON_JOB_CLOSE` held by the app,
+  so it ends with the app however the app ends (`/api/shutdown`, Ctrl+Break in a terminal and an app killed from the task manager
+  were each tried with the real engine; closing the window ends in the same shutdown). A small file per engine in `%LOCALAPPDATA%\Perplexify\engines` lets the next start end one that
+  somehow survived.
+- **Updating by hand.** After changing the pin, run `python -m perplexify download-llama --dest <folder>` and start the
+  server with a small model at `-lv 4`: the app asks for log level 4 because it is the only level at which this build names the
+  graphics card and the number of offloaded layers, so confirm that a newer build still does that and that it does not write
+  prompts or answers to its log at that level.
+- **Unsigned.** The llama.cpp release binaries are not code-signed. They are integrity-checked by the pinned SHA-256 only.
 
 ## Installing silently
 
@@ -113,6 +158,32 @@ powershell -File installer\build.ps1 -SignCommand 'signtool sign /fd sha256 /td 
 `$f` stands for the file being signed; Inno Setup signs the installer and the uninstaller. This path has not been
 exercised in this repository because no certificate was available.
 
+## The macOS app (GitHub Actions)
+
+`.github/workflows/macos-installer.yml` builds `dist/Perplexify-<version>-macos-<arm64|x64>.dmg` on GitHub's Mac runners
+(run it from the Actions tab, or push a `v*` tag). It does not need your PC. Steps: install the packages, run the unit
+tests (informational until they have been seen passing on a Mac), download the models (`pins.json`), fetch llama.cpp
+(`installer/macos/fetch_llama.py`, SHA-256 from `pins.json`), build `Perplexify.app` with PyInstaller
+(`installer/macos/Perplexify.spec`, entry point `installer/macos/entry.py`), copy `models` and `llama` into
+`Contents/Resources`, sign, run the app's own `selftest` plus a web-server and engine check **on the finished bundle**,
+make the DMG, optionally notarize it, upload it.
+
+Signing is optional. Add these repository secrets (Settings > Secrets and variables > Actions) and the next run signs
+with your Apple Developer ID and notarizes, so the app opens without a warning:
+
+| Secret | What it is |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12_BASE64` | your "Developer ID Application" certificate exported as .p12, then base64-encoded |
+| `MACOS_CERTIFICATE_PASSWORD` | the password you gave the .p12 |
+| `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` | for notarization (an app-specific password from appleid.apple.com) |
+
+Without them the app is signed ad hoc, which Apple Silicon requires, and the user approves it once under *System
+Settings > Privacy & Security > Open Anyway*. To update llama.cpp, change the tag, asset names and hashes in `pins.json`
+(`llama` for Windows, `llama_macos` for the Mac; a test checks that both use the same tag). Nothing in this workflow has
+run yet, because it needs a Mac: the first run may need small fixes (PyInstaller sometimes needs another `collect_all`
+line for a package that loads files by name; the spec lists them in one place). The Intel build is marked experimental.
+
 ## Limits worth knowing
 
 - 64-bit Windows 10 or 11 only (also ARM64 PCs through Windows' x64 emulation; that combination has not been tried).
@@ -122,10 +193,11 @@ exercised in this repository because no certificate was available.
 - Right-click menus (copy, paste) are switched off in the window outside `--debug` mode; the keyboard shortcuts
   (Ctrl+C, Ctrl+V, Ctrl+A) work. The page's stored settings (theme, ticked libraries) belong to its address, so the app
   keeps using the port it used last time.
-- Size and time: about 11,000 files and 306 MB once installed, a 128 MB installer. Installing takes a minute or so
-  on a PC with real-time virus scanning, a build with warm caches about four minutes.
+- Size and time: about 11,200 files and 485 MB once installed (llama.cpp with its graphics-card back end is 86 MB of that,
+  the two built-in models about 90 MB). The `-Fast` test build is 260 MB; the normal build compresses harder and is smaller
+  (the last lines of the build say how big). A build with warm caches takes about four minutes.
 - No automatic updates: users run a newer installer.
-- Reranking (an optional setting) downloads a small model the first time it is switched on; everything else needed
-  works offline.
+- Everything needed works offline, including reranking and local models once a model file (.gguf) is on the PC: the models
+  and the engine ship in the installer; only the language-model files themselves are chosen or downloaded by the user.
 - Long paths: the deepest file is about 175 characters below the install folder, so the install folder itself should
   stay under roughly 80 characters.

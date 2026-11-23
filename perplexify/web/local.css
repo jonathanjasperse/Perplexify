@@ -1,0 +1,23 @@
+/* Local model (llama.cpp) pieces of the interface (see js/local.js). Uses the tokens at the top of style.css.
+   The panel is built from the dialog classes that already exist (.group, .pline, .field, .opts, .callout, .tag, .hint, .bar);
+   what is here only places a few things inside it. */
+
+.lc .group { margin-bottom: 12px; }
+/* inside Settings the panel already sits in the group of the Local model: its sections get a heading, not a second frame */
+[data-local-prof] .lc > .group { border: 0; padding: 0; margin-bottom: 16px; }
+.lc .callout { margin-bottom: 12px; }
+.lc .pline { align-items: flex-start; }                  /* a row has two or three lines of text: its button stays at the top */
+.lc .pline .check { align-items: flex-start; }
+.lc .pline .check input { margin-top: 3px; }
+.lc .pline .tag { vertical-align: 1px; }
+.lc .pline .btn.quiet { flex: none; }
+
+.lc-act { flex: none; width: 190px; text-align: right; }
+.lc-act .btn { min-width: 110px; }
+.lc-prog { min-width: 0; text-align: left; }
+.lc-prog .bar { margin: 4px 0 3px; }
+.lc-prog a { color: var(--accent); margin-left: 6px; }
+
+.lc-pick .input { flex: 1; min-width: 0; }
+.lc-line { font-size: 13px; color: var(--text); }
+.lc-tools { margin: 2px 0 0; }

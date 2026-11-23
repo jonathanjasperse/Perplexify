@@ -72,6 +72,8 @@ def license_files(dist: Path, site: Path) -> list[Path]:
 def main() -> int:
     site, out = Path(sys.argv[1]), Path(sys.argv[2])
     model = sys.argv[3] if len(sys.argv) > 3 else ""
+    reranker = sys.argv[4] if len(sys.argv) > 4 else ""
+    llama = Path(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None     # the staged llama.cpp folder (local models)
     parts = [
         "Perplexify bundles the open-source software listed below. Each component is used under its own licence.\n"
         "The texts follow, one section per component.\n\n"
@@ -81,6 +83,9 @@ def main() -> int:
         "Components that are not Python packages:\n"
         "  - Python (runtime): Python Software Foundation License, see runtime\\LICENSE.txt\n"
         + (f"  - {model}: embedding model, MIT licence (ONNX conversion by Qdrant, run through fastembed)\n" if model else "")
+        + (f"  - {reranker}: reranking model, Apache License 2.0 (ONNX conversion run through fastembed)\n" if reranker else "")
+        + ("  - llama.cpp (llama-server and its libraries, in the folder llama): the engine that runs local models, MIT licence;\n"
+           "    its OpenMP runtime (libomp.dll) is under the LLVM licence, see llama\\LICENSE-LLVM-OpenMP\n" if llama else "")
         + "  - Microsoft Visual C++ Redistributable: installed by the installer when needed, under Microsoft's licence terms\n"
     ]
     dists = sorted(site.glob("*.dist-info"), key=lambda p: p.name.lower())
@@ -104,6 +109,17 @@ def main() -> int:
                 body = "(this package ships no licence text; see its project page)." + home
         head = f"{meta['name']} {meta['version']}  ({meta['license']})"
         parts.append("=" * 78 + "\n" + head + "\n" + "-" * 78 + "\n" + body + "\n")
+    if llama:
+        # the licence texts of llama.cpp and of what is built into llama-server (installer\licenses\llama.cpp.txt, copied from the
+        # source release the pinned build comes from); the bare MIT text is only the fallback
+        static = Path(__file__).resolve().parents[1] / "licenses" / "llama.cpp.txt"
+        if static.is_file():
+            parts.append("=" * 78 + "\n" + static.read_text("utf-8").strip() + "\n")
+        else:
+            parts.append("=" * 78 + "\nllama.cpp  (MIT)\n" + "-" * 78 + "\nCopyright (c) 2023-2026 The ggml authors\n\n" + MIT_TEXT + "\n")
+        for lic in sorted(llama.glob("LICENSE*")):
+            parts.append("=" * 78 + f"\n{lic.name}  (shipped with llama.cpp)\n" + "-" * 78 + "\n"
+                         + lic.read_text("utf-8", errors="replace").strip() + "\n")
     out.write_text("\n".join(parts), "utf-8")
     print(f"{len(entries)} packages, {out.stat().st_size // 1024} KB -> {out}")
     return 0

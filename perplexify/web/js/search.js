@@ -31,29 +31,49 @@ MR.resetSearchOptions = function () {
 
 /* ------------------------------------------------------------------ the two views: Ask (a model answers) and Search (you read the passages) */
 MR.renderViewTabs = function () {
-  const v = MR.S.view;
+  const v = MR.S.view, chat = MR.S.chat;
+  const hint = { ask: 'A model answers from the passages it finds, with citations',
+                 search: 'No model needed: meaning and keyword search of your libraries',
+                 bookmarks: 'Sources you saved, in folders of your own',
+                 history: 'Past chats and searches stay on this computer' }[v];
+  // while a conversation is on screen the right-hand side names it and offers a fresh one
+  const right = v === 'ask' && chat.turns
+    ? `<span class="hintline chat-title" title="${MR.esc(chat.title)}">${MR.esc(chat.title || 'New chat')}</span><button class="btn small quiet" id="vt-new" type="button" title="Start a new conversation (the old one stays in History)">New chat</button>`
+    : `<span class="hintline">${hint}</span>`;
   MR.$('#viewtabs').innerHTML = `
     <button type="button" role="tab" data-view="ask" aria-selected="${v === 'ask'}">Ask</button>
     <button type="button" role="tab" data-view="search" aria-selected="${v === 'search'}">Search</button>
-    <span class="spacer"></span>
-    <span class="hintline">${v === 'ask' ? 'A model answers from the passages it finds, with citations' : 'No model needed: meaning and keyword search of your libraries'}</span>`;
+    <button type="button" role="tab" data-view="bookmarks" aria-selected="${v === 'bookmarks'}">Bookmarks</button>
+    <button type="button" role="tab" data-view="history" aria-selected="${v === 'history'}">History</button>
+    <span class="spacer"></span>${right}`;
   MR.$$('[data-view]', MR.$('#viewtabs')).forEach((b) => b.addEventListener('click', () => MR.setView(b.dataset.view)));
+  const fresh = MR.$('#vt-new');
+  if (fresh) fresh.addEventListener('click', () => { MR.newChat(); const p = MR.$('#prompt'); if (p) p.focus(); });
 };
 
 MR.setView = function (v, opts = {}) {
-  v = v === 'search' ? 'search' : 'ask';
+  v = ['search', 'bookmarks', 'history'].includes(v) ? v : 'ask';
   MR.S.view = v;
   MR.store.set('view', v);
-  MR.$('#transcript').hidden = MR.$('#composer').hidden = v === 'search';
+  MR.$('#transcript').hidden = MR.$('#composer').hidden = v !== 'ask';
   MR.$('#searchview').hidden = v !== 'search';
-  if (v === 'search') {
+  MR.$('#bookmarksview').hidden = v !== 'bookmarks';
+  MR.$('#historyview').hidden = v !== 'history';
+  if (v === 'history') {
+    MR.$('#banner').hidden = true;
+    MR.$('#viewer').hidden = true;
+    MR.history.show();
+  } else if (v === 'bookmarks') {
+    MR.$('#banner').hidden = true;
+    MR.bookmarks.show();
+  } else if (v === 'search') {
     MR.$('#banner').hidden = true;
     MR.updateSearchScope();
     if (MR.SS.stale && MR.SS.q.trim()) MR.runSearch();   // libraries were ticked or changed while you were in Ask
     MR.SS.stale = false;
   } else MR.updateBanner();
   MR.renderViewTabs();
-  if (!opts.quiet) setTimeout(() => { const el = v === 'search' ? MR.$('#sv-q') : MR.$('#prompt'); if (el) el.focus(); }, 0);
+  if (!opts.quiet) setTimeout(() => { const el = v === 'search' ? MR.$('#sv-q') : v === 'history' ? MR.$('#hv-q') : v === 'bookmarks' ? MR.$('#bm-q') : MR.$('#prompt'); if (el) el.focus(); }, 0);
 };
 
 /* ------------------------------------------------------------------ building the view */
@@ -79,6 +99,7 @@ MR.renderSearchView = function () {
       </div>
       <div class="sv-opts" id="sv-langs" style="margin-top:8px" hidden></div>
       <div class="sv-status" id="sv-status"></div>
+      <div class="sv-related" id="sv-related" hidden></div>
     </div></div>
     <div class="sv-results" id="sv-results"><div class="column" id="sv-list"></div></div>`;
 
@@ -86,10 +107,10 @@ MR.renderSearchView = function () {
   q.value = SS.q;
   q.addEventListener('input', () => { SS.q = q.value; MR.searchSoon(); });
   q.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); clearTimeout(SS.timer); MR.runSearch(); }
+    if (e.key === 'Enter') { e.preventDefault(); clearTimeout(SS.timer); SS.committed = true; MR.runSearch(); }
     else if (e.key === 'Escape') { q.value = ''; SS.q = ''; MR.runSearch(); }
   });
-  MR.$('#sv-go').addEventListener('click', () => { clearTimeout(SS.timer); MR.runSearch(); });
+  MR.$('#sv-go').addEventListener('click', () => { clearTimeout(SS.timer); SS.committed = true; MR.runSearch(); });
   const bindSeg = (id, key) => MR.$$('#' + id + ' button').forEach((b) => b.addEventListener('click', () => {
     SS[key] = b.dataset.v;
     MR.syncSearchControls(); MR.runSearch();
@@ -165,7 +186,8 @@ MR.renderIntro = function () {
       <li><b>Both</b> combines meaning and keywords. <b>Meaning</b> finds related passages that share no words with your query; <b>Keywords</b> is exact and instant.</li>
       <li>Tick one or several libraries in the sidebar to search them together, or use <b>only</b> to search just one.</li>
       <li>Open a result to read the exact lines, or send it to <b>Ask</b> to have the model explain it.</li>
-    </ul></div>`;
+    </ul><div class="sv-recent" id="sv-recent"></div></div>`;
+  if (MR.history) MR.history.fillRecentSearches();      // "Recent searches", when there are any
 };
 
 /* ------------------------------------------------------------------ highlighting */
@@ -188,7 +210,7 @@ MR.runSearch = async function (more) {
   if (!status) return;
   const q = (MR.$('#sv-q').value || '').trim();
   SS.q = MR.$('#sv-q').value;
-  if (!q) { SS.hits = []; SS.data = null; status.innerHTML = MR.scopeText(); MR.renderIntro(); return; }
+  if (!q) { SS.hits = []; SS.data = null; status.innerHTML = MR.scopeText(); MR.renderIntro(); MR.history.afterSearch(null); return; }
   const libs = MR.searchLibs();
   if (!libs.length) { SS.seq++; SS.data = null; status.innerHTML = MR.scopeText(); MR.renderIntro(); return; }
   const seq = ++SS.seq;
@@ -205,6 +227,7 @@ MR.runSearch = async function (more) {
     SS.offset = d.shown;
     SS.hasMore = d.has_more;
     MR.renderHits();
+    if (!more) MR.history.afterSearch(q, d.hits.length);       // remembers the search and shows related ones from the history
   } catch (e) {
     if (seq !== SS.seq) return;
     status.innerHTML = '<span class="err">' + MR.esc(e.message) + '</span>';
@@ -265,6 +288,7 @@ MR.hitHTML = function (h, i, top, terms) {
       <button type="button" data-act="more">show passage</button>
       ${viewable ? '<button type="button" data-act="view">view source</button>' : ''}
       ${href ? `<a href="${MR.esc(href)}" target="_blank" rel="noopener noreferrer">${gh ? 'GitHub' : h.online_url ? 'open page' : 'open copy'} &#8599;</a>` : ''}
+      ${MR.bookmarks.btn(h, 'data-act="bookmark"')}
       <button type="button" data-act="ask">ask about this</button></div>
   </article>`;
 };
@@ -275,7 +299,9 @@ MR.hitClick = function (e) {
   const card = btn.closest('.hit');
   const h = MR.SS.hits[+card.dataset.i];
   const body = MR.$('[data-body]', card);
-  if (btn.dataset.act === 'more') {
+  if (btn.dataset.act === 'bookmark') {
+    MR.bookmarks.toggle(h, btn);
+  } else if (btn.dataset.act === 'more') {
     const open = body.classList.toggle('full');
     body.innerHTML = MR.hl(open ? h.text : (h.excerpt || h.snippet), MR.SS.data.terms);
     btn.textContent = open ? 'show less' : 'show passage';
@@ -296,11 +322,33 @@ MR.hitClick = function (e) {
   }
 };
 
-/* `/search words` typed in the Ask box jumps here */
-MR.searchFor = function (text) {
-  MR.SS.q = text;
-  MR.setView('search');
+/* `/search words` typed in the Ask box, a suggestion, a related search or an entry of the history jumps here.
+   `filters` (from the history) restores the options the search was made with; without them the normal search starts. */
+MR.searchFor = function (text, filters) {
+  const SS = MR.SS;
+  if (filters) {
+    Object.assign(SS, MR.SEARCH_DEFAULTS, { langs: new Set(filters.langs || []), only: null });
+    SS.mode = filters.mode || SS.mode;
+    SS.scope = filters.scope || SS.scope;
+    SS.all = filters.match === 'all';
+    SS.path = filters.path || '';
+    MR.syncSearchControls();
+  }
+  SS.q = text;
+  MR.setView('search', { quiet: !!filters });
   MR.$('#sv-q').value = text;
-  clearTimeout(MR.SS.timer);
+  clearTimeout(SS.timer);
+  SS.committed = true;
   MR.runSearch();
+};
+
+/* the options of this search that differ from the normal one: what the history remembers it by */
+MR.searchFilters = function () {
+  const SS = MR.SS, d = MR.SEARCH_DEFAULTS, f = {};
+  if (SS.mode !== d.mode) f.mode = SS.mode;
+  if (SS.scope !== d.scope) f.scope = SS.scope;
+  if (SS.all) f.match = 'all';
+  if (SS.langs.size) f.langs = Array.from(SS.langs).sort();
+  if (SS.path.trim()) f.path = SS.path.trim();
+  return f;
 };

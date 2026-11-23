@@ -44,6 +44,7 @@ def _pick(d: dict, keys: tuple[str, ...]) -> int | None:
 
 class OpenAICompatProvider(LLMProvider):
     kind = "openai"
+    QUICK_MAX_TOKENS: int | None = None     # a subclass can cap the short helper calls (query rewriting) lower than the default below
 
     @property
     def base(self) -> str:
@@ -109,7 +110,7 @@ class OpenAICompatProvider(LLMProvider):
         body.update(self._reasoning(quick))
         if quick:
             # reasoning models spend part of the cap on thinking, so keep generous room for the visible answer
-            body["max_tokens"] = 300 if self.provider_id == "deepseek" else 2000
+            body["max_tokens"] = self.QUICK_MAX_TOKENS or (300 if self.provider_id == "deepseek" else 2000)
         else:
             if p.get("temperature") is not None:
                 body["temperature"] = p["temperature"]

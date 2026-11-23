@@ -9,7 +9,7 @@ MR.renderTop = function () {
     ? `<button class="model-chip" id="model-chip" type="button" aria-label="Context window and model details">
          <svg class="ring" id="ring" viewBox="0 0 32 32" aria-hidden="true">
            <circle class="track" cx="16" cy="16" r="13"/>
-           <circle class="arc" id="ring-arc" cx="16" cy="16" r="13" transform="rotate(-90 16 16)"/>
+           <circle class="arc" id="ring-arc" cx="16" cy="16" r="13"/>
          </svg>
          <span class="names"><span class="prov">${MR.esc(p.name)}</span><span class="model" id="chip-model">${MR.esc(p.model || 'choose a model')}</span></span>
          <span class="figures"><span id="fig-used"></span><span id="fig-pct"></span></span>
@@ -140,6 +140,7 @@ MR.renderSide = function () {
       <div class="meta">
         ${code ? '<span class="tag code">code</span>' : ''}${docs ? '<span class="tag">docs</span>' : ''}
         <span>${MR.fmt.n(l.documents)} ${code >= docs ? 'files' : 'pages'}</span><span>${MR.fmt.n(l.chunks)} passages</span>
+        ${l.tokens != null ? `<span title="Approximate size of everything indexed, in model tokens (about 3.6 characters each)">~${MR.fmt.n(l.tokens)} tokens</span>` : ''}
       </div>${state}
     </div>`;
   }).join('');
@@ -155,14 +156,20 @@ MR.renderSide = function () {
     </div>`;
   }).join('');
   const focused = S.libs.find((l) => l.id === S.focus);
-  const addLabel = focused ? '+ Add to ' + (focused.name.length > 20 ? focused.name.slice(0, 19) + '...' : focused.name) : '+ Add source';
+  // With a library focused (its name clicked) there are two buttons: add to that library, and add as a new library.
+  const addButtons = focused
+    ? `<button class="btn primary" id="btn-add" type="button" title="Add a website, repository or documents to ${MR.esc(focused.name)}"><span class="ell">+ Add to ${MR.esc(focused.name)}</span></button>
+       <button class="btn" id="btn-add-new" type="button" title="Add a website, repository or documents as a new library">+ Add New</button>`
+    : '<button class="btn primary" id="btn-add" type="button" title="Add a website, repository or documents">+ Add source</button>';
   side.innerHTML = `
     <div class="side-head"><span class="label">Libraries <span class="faint">${sel}/${S.libs.length}</span></span>
       ${S.libs.length > 1 ? '<span class="links"><a href="#" data-sel="all">all</a><a href="#" data-sel="none">none</a></span>' : ''}</div>
     <div class="libs">${items || '<div class="side-empty">Nothing here yet. Add a manual, a documentation website or a code repository.</div>'}</div>
     ${jobs ? `<div class="jobs">${jobs}</div>` : ''}
-    <div class="side-foot"><button class="btn primary" id="btn-add" type="button" title="${focused ? 'Add a website, repository or documents to ' + MR.esc(focused.name) : 'Add a website, repository or documents'}">${MR.esc(addLabel)}</button></div>`;
+    <div class="side-foot">${addButtons}</div>`;
   MR.$('#btn-add').addEventListener('click', () => MR.openAdd('web', S.focus));
+  const addNew = MR.$('#btn-add-new');
+  if (addNew) addNew.addEventListener('click', () => MR.openAdd('web', null));
   MR.$$('[data-sel]', side).forEach((a) => a.addEventListener('click', (e) => {
     e.preventDefault();
     S.selected = a.dataset.sel === 'all' ? new Set(S.libs.map((l) => l.id)) : new Set();

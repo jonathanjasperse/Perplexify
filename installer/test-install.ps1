@@ -155,7 +155,7 @@ try {
     $code = Invoke-Setup 'install.log'
     Check 'installer exit code is 0' { if ($code -ne 0) { throw "exit code $code (see $Work\install.log)" } }
     foreach ($rel in 'app.ico', 'runtime\python.exe', 'runtime\pythonw.exe', 'runtime\python312._pth', 'runtime\Lib\site-packages\numpy',
-                     'runtime\Lib\site-packages\onnxruntime', 'app\perplexify\__init__.py', 'app\perplexify\web\index.html', 'models', 'THIRD-PARTY-NOTICES.txt', 'unins000.exe') {
+                     'runtime\Lib\site-packages\onnxruntime', 'app\perplexify\__init__.py', 'app\perplexify\web\index.html', 'models', 'llama\llama-server.exe', 'llama\llama.dll', 'THIRD-PARTY-NOTICES.txt', 'unins000.exe') {
         Check "installed: $rel" { Test-Path -LiteralPath (Join-Path $Dir $rel) }
     }
     Check 'Start menu shortcut exists' { Test-Path -LiteralPath $Shortcut }
@@ -191,7 +191,25 @@ try {
     Check 'the app runs as pythonw from the install folder' { @(Get-AppProcesses | Where-Object { $_.Name -eq 'pythonw' }).Count -ge 1 }
     Check 'the web page is served' { (Invoke-WebRequest -Uri "$base/" -UseBasicParsing).Content -match 'Perplexify' }
     Check 'bootstrap lists providers' { @((Invoke-RestMethod -Uri "$base/api/bootstrap").providers).Count -ge 3 }
+    Check 'the local model engine (llama.cpp) is found in the install folder and runs' {
+        $st = Invoke-RestMethod -Uri "$base/api/local/status"
+        $eng = if ($st.engine) { $st.engine } else { $st }
+        if (-not $eng.found) { throw 'the engine was not found' }
+        if ("$($eng.source)" -ne 'installed') { throw "the engine comes from '$($eng.source)', not from the install folder" }
+    }
     Check 'in browser mode the page is told so' { (Invoke-RestMethod -Uri "$base/api/bootstrap").shell -eq 'browser' }
+    Check 'the installed llama-server.exe runs: --version (no model is loaded here)' {
+        $exe = Join-Path $Dir 'llama\llama-server.exe'
+        $so = Join-Path $Work 'llama-version.out'; $se = Join-Path $Work 'llama-version.err'
+        $p = Start-Process -FilePath $exe -ArgumentList '--version' -WorkingDirectory (Split-Path -Parent $exe) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $so -RedirectStandardError $se
+        $said = (Get-Content -LiteralPath $so -Raw) + (Get-Content -LiteralPath $se -Raw)
+        if ($p.ExitCode -ne 0) { throw "exit code $($p.ExitCode): $said" }
+        if ($said -notmatch 'version:\s*\S+ \(build \d+') { throw "unexpected output: $said" }
+        Write-Host "      $(($said -split "`n")[0].Trim())"
+    }
+    Check 'no llama-server.exe is running (the engine starts with the first question, which this test never asks)' {
+        @(Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and $_.Path.StartsWith($Dir, [StringComparison]::OrdinalIgnoreCase) } catch { $false } }).Count -eq 0
+    }
 
     $sample = Join-Path $Work 'sample'
     New-Item -ItemType Directory -Force -Path $sample | Out-Null

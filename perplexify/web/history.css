@@ -1,0 +1,45 @@
+/* History view, suggestions while typing, related searches (see js/history.js). Uses the tokens at the top of style.css. */
+
+/* ---------------------------------------------------------------- the tab row while a chat is on screen */
+.viewtabs .chat-title { align-self: center; max-width: 46%; margin-right: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewtabs > .btn { align-self: center; flex: none; }
+
+/* ---------------------------------------------------------------- suggestions: a dropdown of what you typed before */
+.sv-bar .column { position: relative; }              /* the dropdown below the search boxes is placed against this */
+.suggest { position: absolute; left: 0; right: 0; z-index: 8; overflow: hidden; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r); font-size: 13px; }
+.suggest.up { bottom: calc(100% + 4px); }
+.suggest .sg { display: flex; align-items: center; gap: 12px; width: 100%; padding: 7px 14px; border: 0; background: transparent; text-align: left; color: var(--text); }
+.suggest .sg:hover, .suggest .sg.on { background: var(--hover); }
+.suggest .sg-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.suggest .sg-text b { color: var(--text); font-weight: 560; }
+.suggest .sg .tag { flex: none; }
+
+/* ---------------------------------------------------------------- related searches under the results */
+.sv-related { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; font-size: 12px; }
+.sv-related[hidden] { display: none; }
+.sv-related .chip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- the History view (it reuses the Search view's bar and list) */
+.hv-group { margin: 20px 0 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint); }
+.hv-group:first-child { margin-top: 4px; }
+.hv-item { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 8px; padding: 11px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; min-width: 0; }
+:root[data-theme="light"] .hv-item { background: var(--raise); }
+.hv-item:hover { background: var(--hover); }
+.hv-main { flex: 1; min-width: 0; }
+.hv-title { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hv-preview { margin-top: 3px; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hv-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 6px; font-size: 12px; color: var(--faint); }
+.hv-tools { display: flex; flex: none; gap: 2px; opacity: 0; }
+.hv-item:hover .hv-tools, .hv-item:focus-within .hv-tools { opacity: 1; }
+
+/* ---------------------------------------------------------------- the welcome screen's recent chats */
+.w-recent:empty { display: none; }
+.w-recent { margin-top: 22px; }
+.recent { display: grid; gap: 6px; margin: 8px 0 6px; }
+.recent button { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 8px 12px; border: 1px solid var(--btn-line); border-radius: var(--r); background: var(--btn); color: var(--text); font-size: 13px; text-align: left; }
+.recent button:hover { background: var(--hover); }
+.recent .r-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent .r-meta { flex: none; font-size: 12px; color: var(--faint); }
+
+/* ---------------------------------------------------------------- a note at the top of a chat opened from the history */
+.notice.info { border-color: var(--line-strong); color: var(--muted); background: var(--panel); }

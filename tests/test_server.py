@@ -63,6 +63,7 @@ class ServerAPI(TempHome):
         from perplexify.server import create_app
 
         cls.ctx = AppContext()
+        cls.ctx.settings.update({"retrieval": {"rerank": False}})   # the reranking model is downloaded on first use: not in a unit test
         cls.client = TestClient(create_app(cls.ctx), base_url="http://127.0.0.1")
 
     def wait(self, job, timeout=60):
@@ -87,7 +88,7 @@ class ServerAPI(TempHome):
     def test_01_connect_flow(self):
         boot = self.client.get("/api/bootstrap").json()
         self.assertFalse(boot["ready"])
-        self.assertEqual([p["id"] for p in boot["providers"]], ["openai", "anthropic", "gemini", "deepseek", "custom"])
+        self.assertEqual([p["id"] for p in boot["providers"]], ["openai", "anthropic", "gemini", "deepseek", "local", "custom"])
         self.assertEqual([(p["name"], p["company"]) for p in boot["providers"]][:2], [("ChatGPT", "OpenAI"), ("Claude", "Anthropic")])
         self.assertTrue(any(e["id"] == "builtin" and e["available"] for e in boot["embedders"]))
         self.assertFalse(any(e["id"].startswith("voyage") and e["available"] for e in boot["embedders"]))
@@ -153,7 +154,7 @@ class ServerAPI(TempHome):
                 r = self.client.post("/api/chat", json={"question": "How do I render a block?", "libraries": [lib["id"]], "history": []})
         evs = events(r)
         kinds = [e["type"] for e in evs]
-        self.assertEqual(kinds[0], "status")
+        self.assertEqual(kinds[:2], ["chat", "status"])     # first which saved conversation this turn belongs to (history.py), then the work
         for needed in ("sources", "context", "token", "usage", "done"):
             self.assertIn(needed, kinds)
         self.assertLess(kinds.index("sources"), kinds.index("context"))
@@ -234,7 +235,7 @@ class NoModel(TempHome):
 
         client = TestClient(create_app(AppContext()), base_url="http://127.0.0.1")
         lib = client.post("/api/libraries", json={"name": "x"}).json()
-        evs = events(client.post("/api/chat", json={"question": "hello", "libraries": [lib["id"]]}))
+        evs = [e for e in events(client.post("/api/chat", json={"question": "hello", "libraries": [lib["id"]]})) if e["type"] != "chat"]
         self.assertEqual(evs[0]["type"], "error")
         self.assertEqual(evs[0]["code"], "no_model")
         self.assertIn("ChatGPT, Claude, Gemini or DeepSeek", evs[0]["message"])

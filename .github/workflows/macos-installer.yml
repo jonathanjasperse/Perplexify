@@ -1,0 +1,220 @@
+name: macOS installer
+
+# Builds Perplexify.app and packs it into a disk image (DMG): dist/Perplexify-<version>-macos-<arch>.dmg
+#   * by hand:   GitHub > Actions > "macOS installer" > Run workflow
+#   * automatic: when a tag such as v0.1.0 is pushed; the DMGs are then attached to the GitHub release of that tag
+# Without signing secrets the app is signed "ad hoc": it runs, but macOS Gatekeeper asks the user to approve it once
+# (System Settings > Privacy & Security > Open Anyway). With the secrets listed in installer/README.md it is signed with a
+# Developer ID certificate and notarized, so it opens without any warning.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64          # Apple Silicon (M1 and newer)
+            runner: macos-14
+            experimental: false
+          - arch: x64            # Intel Macs. Some Python packages stop shipping Intel wheels, so this one may fail without
+            runner: macos-15-intel   # stopping the Apple Silicon build.
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 60
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Version and pins
+        id: info
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^__version__ = "\([0-9.]*\)".*/\1/p' perplexify/__init__.py)
+          [ -n "$VERSION" ] || { echo "no __version__ in perplexify/__init__.py"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "embedding=$(python -c "import json; print(json.load(open('installer/pins.json'))['embedding_model'])")" >> "$GITHUB_OUTPUT"
+          echo "reranker=$(python -c "import json; print(json.load(open('installer/pins.json'))['reranker_model'])")" >> "$GITHUB_OUTPUT"
+          echo "Building Perplexify $VERSION for $ARCH"
+
+      - name: Install the app's packages and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "pyinstaller>=6.10,<7"
+
+      # The tests use fakes and a throw-away data folder. They were written on Windows, so a failure here is reported but does
+      # not stop the build until they have been seen passing on macOS (then delete the next line).
+      - name: Unit tests
+        continue-on-error: true
+        run: python -X utf8 -m unittest discover -s tests
+
+      - name: Built-in models (embedding and reranking), cached between runs
+        uses: actions/cache@v4
+        id: models-cache
+        with:
+          path: build/models
+          key: models-${{ steps.info.outputs.embedding }}-${{ steps.info.outputs.reranker }}
+      - name: Download the models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: python -m perplexify download-model --dest build/models --model "${{ steps.info.outputs.embedding }}" --reranker "${{ steps.info.outputs.reranker }}"
+
+      - name: llama.cpp engine for local models (pinned, SHA-256 checked)
+        run: python installer/macos/fetch_llama.py "$ARCH" build/llama build/llama-cache
+
+      - name: Icon
+        run: python -m perplexify.icon --icns build/Perplexify.icns
+
+      - name: Build Perplexify.app
+        run: pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller installer/macos/Perplexify.spec
+
+      - name: Put the models and the engine inside the app
+        run: |
+          RES="dist/Perplexify.app/Contents/Resources"
+          mkdir -p "$RES"
+          ditto build/models "$RES/models"
+          ditto build/llama "$RES/llama"       # ditto keeps the library symlinks (libllama.dylib -> libllama.1.dylib)
+          cp LICENSE "$RES/LICENSE-Perplexify.txt" 2>/dev/null || true
+          du -sh dist/Perplexify.app "$RES/models" "$RES/llama"
+
+      - name: Check which signing secrets exist
+        id: sign
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          NOTARY: ${{ secrets.APPLE_ID }}
+        run: |
+          [ -n "$CERT" ] && echo "developer_id=true" >> "$GITHUB_OUTPUT" || echo "developer_id=false" >> "$GITHUB_OUTPUT"
+          [ -n "$CERT" ] && [ -n "$NOTARY" ] && echo "notarize=true" >> "$GITHUB_OUTPUT" || echo "notarize=false" >> "$GITHUB_OUTPUT"
+
+      - name: Import the Developer ID certificate
+        if: steps.sign.outputs.developer_id == 'true'
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      # Every Mach-O file inside the bundle is signed first (innermost first is not needed: each file is signed on its own),
+      # then the bundle itself. "-" is the ad-hoc identity: required on Apple Silicon, where unsigned code does not run.
+      - name: Sign the app
+        env:
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          DEVELOPER_ID: ${{ steps.sign.outputs.developer_id }}
+        run: |
+          APP="dist/Perplexify.app"
+          if [ "$DEVELOPER_ID" = "true" ]; then ID="$IDENTITY"; OPTS=(--options runtime --timestamp); else ID="-"; OPTS=(); fi
+          find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            kind=$(file -b "$f")
+            if [[ "$kind" == *Mach-O* ]]; then
+              codesign --force --sign "$ID" "${OPTS[@]}" "$f" || { echo "could not sign $f"; exit 1; }
+            fi
+          done
+          codesign --force --sign "$ID" "${OPTS[@]}" --entitlements installer/macos/entitlements.plist "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      # ---- prove the finished app works, before it is packed
+      - name: Smoke test the app (command line, offline models, engine, web server)
+        run: |
+          EXE="$PWD/dist/Perplexify.app/Contents/MacOS/Perplexify"
+          export PERPLEXIFY_HOME="$RUNNER_TEMP/perplexify-home"
+          "$EXE" version
+          HF_HUB_OFFLINE=1 "$EXE" selftest
+          RES="$PWD/dist/Perplexify.app/Contents/Resources"
+          "$RES/llama/llama-server" --version
+          "$EXE" serve --no-browser --port 8791 > "$RUNNER_TEMP/serve.log" 2>&1 &
+          PID=$!
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8791/api/health >/dev/null 2>&1 && break
+            kill -0 "$PID" 2>/dev/null || { cat "$RUNNER_TEMP/serve.log"; echo "the app stopped"; exit 1; }
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8791/api/health
+          curl -fsS http://127.0.0.1:8791/api/bootstrap | python -c "import json,sys; b=json.load(sys.stdin); assert b['platform']=='mac', b['platform']; print('providers:', len(b['providers']))"
+          curl -fsS http://127.0.0.1:8791/ | grep -q Perplexify
+          curl -fsS http://127.0.0.1:8791/api/local/status | python -c "import json,sys; e=json.load(sys.stdin)['engine']; assert e['found'] and e['source']=='installed', e; print('engine:', e.get('version'), e.get('gpu_backends'))"
+          kill "$PID"
+
+      - name: Make the disk image
+        run: |
+          V="${{ steps.info.outputs.version }}"
+          mkdir -p dist/dmg
+          ditto dist/Perplexify.app dist/dmg/Perplexify.app
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "Perplexify" -srcfolder dist/dmg -ov -format UDZO "dist/Perplexify-$V-macos-$ARCH.dmg"
+          rm -rf dist/dmg
+
+      - name: Sign and notarize the disk image
+        if: steps.sign.outputs.notarize == 'true'
+        env:
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          DMG=$(ls dist/Perplexify-*-macos-"$ARCH".dmg)
+          codesign --force --sign "$IDENTITY" --timestamp "$DMG"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Checksum
+        run: |
+          cd dist
+          shasum -a 256 Perplexify-*-macos-"$ARCH".dmg | tee "Perplexify-${{ steps.info.outputs.version }}-macos-$ARCH.dmg.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Perplexify-macos-${{ matrix.arch }}
+          path: |
+            dist/Perplexify-*.dmg
+            dist/Perplexify-*.dmg.sha256
+          if-no-files-found: error
+
+  release:
+    name: Attach to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Perplexify-macos-*
+          merge-multiple: true
+          path: dist
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1 \
+            || gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "Perplexify ${{ github.ref_name }}" --notes "Installers for ${{ github.ref_name }}."
+          gh release upload "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --clobber

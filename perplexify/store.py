@@ -16,6 +16,8 @@ from typing import Iterator, Sequence
 
 import numpy as np
 
+from .textutil import CHARS_PER_TOKEN
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
@@ -360,7 +362,7 @@ class Store:
     def stats(self) -> dict:
         c = self._conn()
         docs = c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-        chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        chunks, chars = c.execute("SELECT COUNT(*), COALESCE(SUM(n_chars), 0) FROM chunks").fetchone()
         pending = c.execute("SELECT COUNT(*) FROM chunks WHERE vector IS NULL").fetchone()[0]
         last = c.execute("SELECT COALESCE(MAX(indexed_at), 0) FROM documents").fetchone()[0]
         kinds = {r[0]: r[1] for r in c.execute("SELECT kind, COUNT(*) FROM documents WHERE n_chunks > 0 GROUP BY kind")}
@@ -371,6 +373,7 @@ class Store:
         except OSError:
             size = 0
         return {"documents": docs, "chunks": chunks, "pending": pending, "embedded": chunks - pending,
+                "tokens": int(chars / CHARS_PER_TOKEN),            # approximate size of everything indexed, in model tokens
                 "last_indexed": last, "db_bytes": size, "kinds": kinds, "langs": langs}
 
     # ------------------------------------------------------------------ crawl state

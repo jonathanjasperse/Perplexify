@@ -79,13 +79,16 @@ MR.openConnect = function (preselect) {
     body: '<div id="cx"></div>',
     foot: '<span class="grow" id="cx-note"></span><button class="btn" data-close2 type="button">Cancel</button><button class="btn primary" id="cx-go" type="button">Connect</button>' });
   m.$('[data-close2]').addEventListener('click', () => m.close());
+  let stopLocal = null;     // the Local model panel (js/local.js) while its tile is chosen
 
   const draw = () => {
+    if (stopLocal) { stopLocal(); stopLocal = null; }
     const P = S.catalog.find((p) => p.id === sel);
     const grid = S.catalog.map((p) => `<button type="button" class="prov" data-p="${p.id}" aria-pressed="${p.id === sel}">
       ${connected.has(p.id) ? '<span class="tick">ok</span>' : ''}<b>${MR.esc(p.name)}</b><span>${MR.esc(p.company)}</span></button>`).join('');
     const custom = P.id === 'custom';
-    m.$('#cx').innerHTML = `
+    const isLocal = !!(P.local && MR.local);     // a model on this computer: no key, its own panel
+    m.$('#cx').innerHTML = isLocal ? `<div class="provgrid">${grid}</div><div id="cx-local"></div>` : `
       <div class="provgrid">${grid}</div>
       ${P.env_var ? `<div class="callout">Found <b class="mono">${MR.esc(P.env_var)}</b> in your environment.
         <button class="btn small" id="cx-env" type="button" style="margin-left:10px">${useEnv ? 'Using it' : 'Use it'}</button></div>` : ''}
@@ -100,6 +103,7 @@ MR.openConnect = function (preselect) {
       <div id="cx-status"></div>
       <div class="hint">${MR.esc(P.model_note || '')}</div>`;
     m.$$('.prov').forEach((b) => b.addEventListener('click', () => { sel = b.dataset.p; useEnv = false; draw(); }));
+    if (isLocal) { stopLocal = MR.local.connectPane(m, () => connected.add('local')); return; }
     const env = m.$('#cx-env');
     if (env) env.addEventListener('click', () => { useEnv = !useEnv; draw(); });
     m.$$('[data-fill]').forEach((b) => b.addEventListener('click', () => { m.$('#cx-url').value = b.dataset.fill; }));
@@ -363,6 +367,7 @@ MR.openSettings = function (tab = 'models') {
   const models = async () => {
     const pane = m.$('#st-pane');
     const rows = S.profiles.filter((p) => p.has_key).map((p) => {
+      if (p.provider === 'local' && MR.local) return MR.local.settingsGroup(p, !!(S.profile && p.id === S.profile.id));   // a model on this computer (js/local.js)
       const anth = p.kind === 'anthropic';
       return `<div class="group" data-prof="${MR.esc(p.id)}">
         <h3>${MR.esc(p.name)}${S.profile && p.id === S.profile.id ? ' &middot; active' : ''}</h3>
@@ -380,6 +385,7 @@ MR.openSettings = function (tab = 'models') {
     }).join('');
     pane.innerHTML = (rows || '<div class="callout">No model is connected yet.</div>') + '<button class="btn" id="st-add" type="button">+ Connect a provider</button>';
     m.$('#st-add').addEventListener('click', () => { m.close(); MR.openConnect(); });
+    MR.$$('[data-local-prof]', pane).forEach((g) => MR.local.wireSettings(g, draw));
     MR.$$('[data-prof]', pane).forEach(async (g) => {
       const id = g.dataset.prof, msg = MR.$('[data-msg]', g);
       try {
@@ -412,7 +418,7 @@ MR.openSettings = function (tab = 'models') {
       ${num('max_excerpt_tokens', 'Excerpt budget (tokens)', 1000, 400000, 'Upper limit; also capped by the model\'s window.')}</div>
       ${chk('query_rewrite', 'Rewrite follow-up questions', 'Turns "and its parameters?" into a standalone search (one short extra model call).')}
       ${chk('multi_query', 'Search with extra phrasings', 'Asks the model for alternative wordings. Better recall, one more call.')}
-      ${chk('rerank', 'Rerank with a cross-encoder', 'More accurate ordering; downloads a small model the first time.')}
+      ${chk('rerank', 'Rerank with a cross-encoder', 'More accurate ordering; the small model it needs ships with Perplexify.')}
       <div class="row"><button class="btn primary" id="st-save" type="button">Save</button><span class="hint" id="st-msg"></span></div>`;
     m.$('#st-save').addEventListener('click', async () => {
       const body = {};
@@ -447,7 +453,9 @@ MR.openSettings = function (tab = 'models') {
   const privacy = async () => {
     m.$('#st-pane').innerHTML = `<div class="group"><h3>What leaves this computer</h3>
         <p style="margin:0 0 8px">Your libraries, the downloaded sites and the search index stay on this computer. When you ask a question, three things are sent to the model provider you connected:
-        your question, the few most relevant excerpts (documentation or source code), and the recent conversation. Nothing else is uploaded.</p>
+        your question, the few most relevant excerpts (documentation or source code), and the recent conversation. Nothing else is uploaded.
+        With a local model (llama.cpp) even those stay here: the model runs on this computer and nothing is sent anywhere.</p>
+        <p style="margin:0 0 8px">Your chat history, saved searches and bookmarks are stored only in this computer's data folder. They are never sent to a provider; you can clear history in the History tab.</p>
         <p style="margin:0">With a cloud embedding model selected for a library, its passages are also sent to that embedding provider while it is indexed. The built-in model sends nothing.</p></div>
       <div class="group"><h3>Keys</h3><p style="margin:0">API keys are encrypted with ${S.platform === 'windows' ? 'Windows data protection (bound to your Windows account)' : S.platform === 'mac' ? 'the macOS Keychain' : 'a local file readable only by you'} and are never shown again in this window.</p></div>
       <div class="group"><h3>This app</h3><div class="row wrap">
@@ -531,6 +539,7 @@ MR.libAction = async function (id, action) {
         <dt>documents</dt><dd>${MR.fmt.int(d.documents)}</dd><dt>passages</dt><dd>${MR.fmt.int(d.chunks)} (${MR.fmt.int(d.embedded)} embedded)</dd>
         <dt>kinds</dt><dd>${MR.esc(Object.entries(d.kinds || {}).map(([k, v]) => k + ' ' + v).join(', ') || '-')}</dd>
         <dt>embedding</dt><dd>${MR.esc(d.embedder.provider + ': ' + d.embedder.model)}${d.embedder.dim ? ' (' + d.embedder.dim + ' dims)' : ''}</dd>
+        <dt>approx. tokens</dt><dd>~${MR.fmt.int(d.tokens)} <span class="faint">(all passages together)</span></dd>
         <dt>index size</dt><dd>${MR.fmt.bytes(d.db_bytes)}</dd><dt>downloaded files</dt><dd>${MR.fmt.bytes(d.source_bytes)}</dd>
         <dt>last indexed</dt><dd>${MR.fmt.ago(d.last_indexed)}</dd><dt>sources</dt><dd>${src}</dd></dl>` });
     }

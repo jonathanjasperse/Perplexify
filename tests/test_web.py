@@ -21,6 +21,30 @@ class Defaults(unittest.TestCase):
         self.assertIn("localStorage.getItem('perplexify.theme')", script)
 
 
+class Wiring(unittest.TestCase):
+    """The page is plain files: a script or stylesheet that is not linked, or a view that has no place, would only show up as a blank screen."""
+
+    def setUp(self):
+        self.html = PAGE.read_text("utf-8")
+        self.web = PAGE.parent
+
+    def test_every_linked_file_exists_and_every_script_is_linked(self):
+        linked = re.findall(r'<script src="([^"]+)"', self.html) + re.findall(r'<link rel="stylesheet" href="([^"]+)"', self.html)
+        for name in linked:
+            self.assertTrue((self.web / name).is_file(), name)
+        on_disk = {f"js/{p.name}" for p in (self.web / "js").glob("*.js")}
+        self.assertEqual(on_disk - set(linked), set())
+
+    def test_main_starts_last_so_everything_it_uses_is_defined(self):
+        scripts = re.findall(r'<script src="([^"]+)"', self.html)
+        self.assertEqual(scripts[0], "js/core.js")
+        self.assertEqual(scripts[-1], "js/main.js")
+
+    def test_the_three_views_have_their_places(self):
+        for view in ("transcript", "composer", "searchview", "historyview", "viewer", "viewtabs"):
+            self.assertIn(f'id="{view}"', self.html)
+
+
 CSS = PAGE.with_name("style.css").read_text("utf-8")
 
 

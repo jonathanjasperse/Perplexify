@@ -17,8 +17,11 @@ yes please tell show give me explain describe
 """.split())
 
 
+CHARS_PER_TOKEN = 3.6    # a rough average for prose and code; real tokenizers differ by model
+
+
 def estimate_tokens(text: str) -> int:
-    return max(1, int(len(text) / 3.6))
+    return max(1, int(len(text) / CHARS_PER_TOKEN))
 
 
 def split_identifier(token: str) -> list[str]:

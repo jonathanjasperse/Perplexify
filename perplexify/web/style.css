@@ -21,7 +21,7 @@
   --r-sm: 4px;         /* tags, key caps, inline code */
   --r-lg: 12px;        /* dialogs, popovers, panels */
   --top-h: 52px;
-  --side-w: 288px;
+  --side-w: 312px;     /* wide enough for "5 pages  260 passages  ~61k tokens" on one line */
 }
 :root[data-read="serif"] { --read: var(--serif); --head: var(--serif); --read-size: 16.5px; --read-lh: 1.64; }
 
@@ -174,10 +174,13 @@ mark {
 .ring { width: 32px; height: 32px; flex: none; display: block; }
 .ring circle { fill: none; stroke-width: 3.5; }
 .ring .track { stroke: var(--line-strong); }
-.ring .arc { stroke: var(--accent); transition: stroke-dashoffset 0.4s ease, stroke 0.2s; }
+/* The arc starts at 12 o'clock. That rotation is set here and not with a transform attribute on the circle: a CSS animation
+   replaces the attribute but keeps the transform-origin, which threw the spinning arc far off the ring. */
+.ring .arc { stroke: var(--accent); transform: rotate(-90deg); transform-box: view-box; transform-origin: 16px 16px; transition: stroke-dashoffset 0.4s ease, stroke 0.2s; }
 .ring.warn .arc { stroke: var(--warn); }
 .ring.err .arc { stroke: var(--err); }
-.ring.loading .arc { stroke-dasharray: 22 200 !important; stroke-dashoffset: 0 !important; transform-origin: 50% 50%; animation: spin 1s linear infinite; }
+.ring.loading .arc { stroke-dasharray: 22 200 !important; stroke-dashoffset: 0 !important; transition: none; animation: ring-spin 1s linear infinite; }
+@keyframes ring-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .seg { display: inline-flex; background: var(--btn); border: 1px solid var(--btn-line); border-radius: var(--r); overflow: hidden; }
@@ -290,8 +293,11 @@ input.input, select.input { height: 36px; }
 .lib .menu-btn { border: 0; background: transparent; color: var(--faint); padding: 0 4px; font-size: 15px; line-height: 1; }
 .lib .menu-btn:hover { color: var(--text); }
 .side-empty { padding: 14px 16px; color: var(--muted); font-size: 13px; }
-.side-foot { padding: 10px 12px 14px; border-top: 1px solid var(--line); }
-.side-foot .btn { width: 100%; }
+.side-foot { display: flex; gap: 8px; padding: 10px 12px 14px; border-top: 1px solid var(--line); }
+.side-foot .btn { min-width: 0; }
+.side-foot .btn.primary { flex: 1 1 auto; }              /* "+ Add source", or "+ Add to <library>" that shortens its name to fit */
+.side-foot .btn:not(.primary) { flex: none; }            /* "+ Add New" keeps its width, to the right */
+.side-foot .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .jobs { border-top: 1px solid var(--line); padding: 8px 12px; max-height: 38%; overflow: auto; }
 .job { padding: 8px 0; border-top: 1px solid var(--line); font-size: 12px; }

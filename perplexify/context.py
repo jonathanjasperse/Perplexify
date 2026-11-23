@@ -6,7 +6,9 @@ import threading
 import time
 
 from . import paths
+from .bookmarks import BookmarkStore
 from .embeddings import get_embedder, spec_key
+from .history import HistoryStore
 from .jobs import JobManager
 from .library import LibraryManager
 from .llm import LLMProvider, make_provider
@@ -22,6 +24,8 @@ class AppContext:
         self.settings = Settings()
         self.libs = LibraryManager()
         self.jobs = JobManager()
+        self.history = HistoryStore()      # chats and searches of this computer (history.db), opened on first use
+        self.bookmarks = BookmarkStore()   # bookmarked sources in folders (bookmarks.db), opened on first use
         self.retriever = Retriever(self.libs, self.settings)
         self.engine = RagEngine(self)
         self._info: dict[str, tuple[float, dict]] = {}

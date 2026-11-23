@@ -1,10 +1,14 @@
-"""Pluggable cloud chat back ends. A "profile" in settings selects one."""
+"""Pluggable chat back ends: the cloud providers and local models (llama.cpp). A "profile" in settings selects one."""
 from __future__ import annotations
 
 from .base import Delta, LLMError, LLMProvider, ThinkFilter
 
 
 def make_provider(profile: dict, api_key: str = "") -> LLMProvider:
+    if profile.get("provider") == "local":
+        from .local import LocalProvider
+
+        return LocalProvider(profile, api_key)
     if profile.get("kind") == "anthropic":
         from .anthropic_provider import AnthropicProvider
 

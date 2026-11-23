@@ -69,6 +69,7 @@ class Engine(TempHome):
         from perplexify.context import AppContext
 
         cls.ctx = AppContext()
+        cls.ctx.settings.update({"retrieval": {"rerank": False}})   # the reranking model is downloaded on first use: not in a unit test
         root = Path(cls._home)
         (root / "docs").mkdir()
         (root / "docs" / "guide.md").write_text(GUIDE, "utf-8")
@@ -189,6 +190,7 @@ class SearchEndpoint(TempHome):
         from perplexify.server import create_app
 
         cls.ctx = AppContext()
+        cls.ctx.settings.update({"retrieval": {"rerank": False}})   # the reranking model is downloaded on first use: not in a unit test
         cls.client = TestClient(create_app(cls.ctx), base_url="http://127.0.0.1")
         root = Path(cls._home) / "many"
         root.mkdir()

@@ -17,7 +17,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import __version__, github, osutil, paths, providers, tasks
 from .context import AppContext
 from .embeddings import EmbeddingError, validate_embedder
+from .bookmarks_api import make_router as bookmarks_router
+from .history_api import make_router as history_router
 from .llm import LLMError, make_provider
+from .local_api import make_router as local_router, stop_engine_on_shutdown
 from .presets import PRESETS
 from .settings import clean_embedder, sanitize_profile
 from .textutil import decode_bytes
@@ -132,6 +135,7 @@ class ChatBody(Body):
     libraries: list[str] = []
     profile_id: str | None = None
     options: dict | None = None
+    chat_id: str | None = None        # the saved conversation this question continues (see history.py); a new one when absent
 
 
 class KeyBody(Body):
@@ -180,7 +184,7 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
     def public_profile(p: dict) -> dict:
         q = {k: v for k, v in p.items() if k != "api_key_enc"}
         env = providers.env_key(p["provider"])
-        q["has_key"] = bool(p.get("api_key_enc")) or bool(p.get("use_env_key") and env)
+        q["has_key"] = bool(p.get("api_key_enc")) or bool(p.get("use_env_key") and env) or providers.is_local(p)  # a local model needs no key
         return q
 
     def embedder_options() -> list[dict]:
@@ -189,6 +193,11 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
             key_ok = o["key"] is None or bool(settings.provider_key(o["key"]))
             out.append({**o, "available": key_ok})
         return out
+
+    app.include_router(history_router(ctx))      # chats and searches of this computer: /api/history/...
+    app.include_router(bookmarks_router(ctx))    # bookmarked sources in folders: /api/bookmarks/...
+    app.include_router(local_router(ctx))        # local models (llama.cpp): /api/local/...
+    stop_engine_on_shutdown(app)                 # the llama.cpp engine goes down with the app (window closed, /api/shutdown, Ctrl+C)
 
     # ------------------------------------------------------------------ meta
     @app.get("/api/health")
@@ -578,11 +587,19 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
 
     @app.post("/api/chat")
     def chat(body: ChatBody):
+        profile = settings.profile(body.profile_id)
+        meta = {"profile": {"id": profile["id"], "name": profile.get("name"), "model": profile.get("model")} if profile else {},
+                "libraries": [{"id": lib.id, "name": lib.name} for lib in (ctx.libs.get(i) for i in body.libraries) if lib is not None]}
+
         def events():
+            # the history wrapper passes every event through and saves the turn (also a stopped one) when the stream ends
+            stream = ctx.history.record(body.question, body.chat_id,
+                                        ctx.engine.answer_stream(body.question, body.history, body.libraries, body.profile_id, body.options), meta)
             try:
-                for ev in ctx.engine.answer_stream(body.question, body.history, body.libraries, body.profile_id, body.options):
+                for ev in stream:
                     yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-            except GeneratorExit:  # the browser went away (Stop pressed): nothing more to do
+            except GeneratorExit:  # the browser went away (Stop pressed): keep what was written so far
+                stream.close()
                 return
             except Exception as e:  # noqa: BLE001
                 log.exception("chat stream failed")

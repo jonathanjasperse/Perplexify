@@ -105,6 +105,8 @@ Source: "{#WebView2Setup}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: 
 ; an upgrade replaces the program folders completely, so nothing from the old version lingers
 Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\runtime"
+; the llama.cpp engine for local models loads every ggml-*.dll it finds next to it: a file left over from an older build must not
+Type: filesandordirs; Name: "{app}\llama"
 ; shortcuts of the product's earlier name (Manual RAG)
 Type: files; Name: "{autoprograms}\Manual RAG.lnk"
 Type: files; Name: "{autodesktop}\Manual RAG.lnk"
@@ -126,6 +128,7 @@ Filename: "{app}\{#AppExe}"; Parameters: "{#AppArgs}"; WorkingDir: "{app}"; Desc
 Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\models"
+Type: filesandordirs; Name: "{app}\llama"
 Type: dirifempty; Name: "{app}"
 
 [Code]

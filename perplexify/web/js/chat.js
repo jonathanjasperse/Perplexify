@@ -39,6 +39,7 @@ MR.renderWelcomeIfEmpty = function () {
       ${preset && !hasLibs ? step('', false, preset.name, MR.esc(preset.description), '<button class="btn" id="w-preset" type="button">Add this</button>') : ''}
     </div>
     ${questions.length ? '<div class="label">Try asking</div><div class="suggestions">' + questions.map((q) => `<button type="button" data-q="${MR.esc(q)}">${MR.esc(q)}</button>`).join('') + '</div>' : ''}
+    <div class="w-recent" id="w-recent"></div>
     ${hasLibs ? '<p class="hint" style="margin-top:18px">Rather read the passages yourself? <a href="#" id="w-search">Search without a model</a>: meaning and keyword search of the ticked libraries.</p>' : ''}
   </div>`;
   const on = (id, fn) => { const b = MR.$(id, tr); if (b) b.addEventListener('click', fn); };
@@ -48,6 +49,7 @@ MR.renderWelcomeIfEmpty = function () {
   on('#w-preset', () => MR.addPreset(preset));
   MR.$$('[data-q]', tr).forEach((b) => b.addEventListener('click', () => { const t = MR.$('#prompt'); t.value = b.dataset.q; t.focus(); MR.autosize(); }));
   MR.updateBanner();
+  if (MR.history) MR.history.fillRecent();            // "Recent chats", when there are any
 };
 
 MR.updateBanner = function () {
@@ -81,7 +83,12 @@ MR.renderComposer = function () {
   MR.updateScope();
   ta.focus();
 };
-MR.autosize = function () { const t = MR.$('#prompt'); t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight) + 'px'; };
+MR.autosize = function () {
+  const t = MR.$('#prompt');
+  if (!t.value) { t.style.height = ''; return; }          // empty: one line from the stylesheet (a height measured while the page was hidden must not stay)
+  t.style.height = 'auto';
+  t.style.height = Math.min(200, t.scrollHeight) + 'px';
+};
 /* which libraries the ticks in the sidebar point at, in words: "JUCE docs", "JUCE docs, JUCE source", "all 4 libraries" */
 MR.scopeLabel = function () {
   const S = MR.S, sel = S.libs.filter((l) => S.selected.has(l.id));
@@ -147,11 +154,13 @@ MR.stop = function () { if (MR.S.abort) MR.S.abort.abort(); };
 MR.newChat = function () {
   if (MR.S.streaming) MR.stop();
   MR.S.history = [];
+  MR.S.chat = { id: null, title: '', turns: 0 };          // the next question starts a new saved chat (see history.js)
   MR.S.ctx.used = 0; MR.S.ctx.breakdown = null; MR.S.ctx.actual = false;
   MR.$('#transcript').innerHTML = '';
   MR.$('#viewer').hidden = true;
   MR.renderWelcomeIfEmpty();
   MR.updateGauge();
+  MR.renderViewTabs();
 };
 
 /* ------------------------------------------------------------------ streaming */
@@ -185,13 +194,12 @@ MR.stickScroll = function (fn) {
   if (stick) tr.scrollTop = tr.scrollHeight;
 };
 
-MR.ask = async function (q) {
-  const S = MR.S;
-  if (S.streaming) return;
-  if (!S.profile) { MR.openConnect(); return; }
-  const libs = Array.from(S.selected);
-  if (!libs.length) { MR.toast('Select at least one library in the sidebar first.', 'err'); return; }
-  MR._lastQ = q;
+/* One turn of the conversation: the question, the trace of what the app did, the answer and its sources.
+   The same code draws a live answer (events streamed from the app) and a saved one (the same events replayed from the history),
+   so an old chat looks exactly like it did when it was asked. */
+MR.beginTurn = function (q, opts = {}) {
+  const S = MR.S, replay = !!opts.replay;
+  const model = opts.model || (S.profile && S.profile.model) || 'the model';
   const tr = MR.$('#transcript');
   const welcome = MR.$('.welcome', tr);
   if (welcome) tr.innerHTML = '';
@@ -200,7 +208,7 @@ MR.ask = async function (q) {
       <div class="trace"></div><details class="thinking" hidden><summary>reasoning</summary><div class="t-body"></div></details>
       <div class="answer"></div><div class="notices"></div><div class="sources" hidden></div><div class="foot"></div></div></article>`);
   tr.appendChild(turn);
-  tr.scrollTop = tr.scrollHeight;
+  if (!replay) tr.scrollTop = tr.scrollHeight;
   const R = { trace: MR.$('.trace', turn), answer: MR.$('.answer', turn), think: MR.$('.thinking', turn), notices: MR.$('.notices', turn),
               sources: MR.$('.sources', turn), foot: MR.$('.foot', turn), text: '', thinking: '', srcs: [], est: 0, chars: 0, raf: 0,
               t0: performance.now(), usage: null, errored: false, lines: {} };
@@ -220,15 +228,23 @@ MR.ask = async function (q) {
     R.answer.innerHTML = MR.md(R.text) + (final ? '' : '<span class="cursor"></span>');
   };
   const schedule = () => { if (!R.raf) R.raf = requestAnimationFrame(() => { R.raf = 0; MR.stickScroll(() => render(false)); }); };
-
-  S.streaming = true; S.ctx.loading = true; MR.updateGauge(); MR.updateScope(); MR.startSpin();
-  S.abort = new AbortController();
-  line('search', '<b>Search</b> ' + MR.esc(q.length > 90 ? q.slice(0, 90) + '...' : q), 'spin');
+  const shorten = (t) => MR.esc(t.length > 90 ? t.slice(0, 90) + '...' : t);
+  line('search', '<b>Search</b> ' + shorten(q), 'spin');
 
   const onEvent = (ev) => {
     switch (ev.type) {
+      case 'chat':                                       // which saved conversation this turn belongs to (see history.js)
+        S.chat.id = ev.id; S.chat.title = ev.title;
+        MR.renderViewTabs();
+        break;
       case 'status':
-        if (ev.text === 'generating') line('gen', '<b>' + MR.esc(S.profile.model) + '</b> writing the answer', 'spin');
+        if (ev.text === 'generating') line('gen', '<b>' + MR.esc(model) + '</b> writing the answer', 'spin');
+        else if (ev.text === 'loading_model') {            // a model on this computer is still being loaded into memory
+          const secs = Math.round(ev.seconds || 0);
+          line('load', 'Loading <b>' + MR.esc(ev.model || model) + '</b> into memory' + (secs >= 2 ? ' (' + secs + ' s)' : ''), 'spin');
+        } else if (ev.text === 'model_ready') {
+          line('load', '<b>' + MR.esc(ev.model || model) + '</b> is ready' + (ev.seconds >= 2 ? ' (loaded in ' + Math.round(ev.seconds) + ' s)' : ''), 'done');
+        }
         break;
       case 'rewrite': sub('as a standalone question: <b>' + MR.esc(ev.query) + '</b>'); break;
       case 'expand': sub('also searching: ' + ev.queries.map((x) => MR.esc(x)).join(' &middot; ')); break;
@@ -236,67 +252,107 @@ MR.ask = async function (q) {
         R.srcs = ev.sources;
         const libsN = new Set(ev.sources.map((s) => s.library_id)).size;
         const d = ev.debug || {};
-        line('search', '<b>Search</b> ' + MR.esc(q.length > 90 ? q.slice(0, 90) + '...' : q), 'done');
+        line('search', '<b>Search</b> ' + shorten(q), 'done');
         sub(`${ev.sources.length} passages from ${libsN} ${libsN === 1 ? 'library' : 'libraries'} &middot; vector ${d.vector_hits ?? '-'} + keyword ${d.keyword_hits ?? '-'} candidates &middot; ${d.timing_ms ? MR.fmt.secs(d.timing_ms.total) : ''}${d.reranked ? ' &middot; reranked' : ''}`);
         if (d.pending) sub('<span class="warn">' + MR.fmt.n(d.pending) + ' passages are still being embedded, so semantic matching is partial.</span>');
         MR.renderSources(R, turn);
         break;
       }
       case 'context': {
-        const c = S.ctx;
-        c.window = ev.window || c.window; c.maxContext = ev.max_context; c.breakdown = ev.breakdown; c.used = ev.estimated_prompt; c.actual = false;
         R.est = ev.estimated_prompt;
-        sub(`prompt about ${MR.fmt.n(ev.estimated_prompt)} tokens of ${MR.fmt.n(c.window)} &middot; ${MR.fmt.n(ev.breakdown.excerpts)} of it excerpts`);
-        MR.updateGauge();
+        sub(`prompt about ${MR.fmt.n(ev.estimated_prompt)} tokens of ${MR.fmt.n(ev.window || S.ctx.window)} &middot; ${MR.fmt.n(ev.breakdown.excerpts)} of it excerpts`);
+        if (!replay) {                                   // the gauge shows the live conversation, not an old one
+          const c = S.ctx;
+          c.window = ev.window || c.window; c.maxContext = ev.max_context; c.breakdown = ev.breakdown; c.used = ev.estimated_prompt; c.actual = false;
+          MR.updateGauge();
+        }
         break;
       }
       case 'thinking':
         R.thinking += ev.text; R.think.hidden = false; MR.$('.t-body', R.think).textContent = R.thinking; break;
       case 'token':
-        if (S.ctx.loading) { S.ctx.loading = false; MR.updateGauge(); }
+        if (!replay && S.ctx.loading) { S.ctx.loading = false; MR.updateGauge(); }
         R.text += ev.text; R.chars += ev.text.length;
-        if (R.est) { S.ctx.used = R.est + R.chars / 3.6; MR.updateGauge(); }
-        schedule();
+        if (!replay && R.est) { S.ctx.used = R.est + R.chars / 3.6; MR.updateGauge(); }
+        if (!replay) schedule();
         break;
       case 'usage':
         R.usage = ev;
-        if (ev.prompt_tokens != null) { S.ctx.used = ev.prompt_tokens + (ev.completion_tokens || 0); S.ctx.actual = true; MR.updateGauge(); }
+        if (!replay && ev.prompt_tokens != null) { S.ctx.used = ev.prompt_tokens + (ev.completion_tokens || 0); S.ctx.actual = true; MR.updateGauge(); }
         break;
       case 'notice': R.notices.appendChild(MR.el('<div class="notice">' + MR.esc(ev.text) + '</div>')); break;
       case 'error':
         R.errored = true;
+        if (R.lines.load && R.lines.load.querySelector('.spin')) line('load', 'Loading the model failed', 'err');
         line('gen', MR.esc(ev.message), 'err');
-        if (ev.code === 'no_model') MR.openConnect();
+        if (ev.code === 'no_model' && !replay) MR.openConnect();
+        else if (/^(engine|model)_/.test(ev.code || '') && !replay) MR.toast('Open Settings > Models to fix the local model.', 'err');
         break;
       case 'done': R.done = ev; break;
     }
   };
 
+  /* after the last event: stop the spinners, draw the final answer and the line of figures under it */
+  const finish = () => {
+    cancelAnimationFrame(R.raf); R.raf = 0;
+    MR.$$('.spin', turn).forEach((s) => { s.parentElement.innerHTML = R.stopped ? '■' : '✓'; });
+    if (replay) render(true); else MR.stickScroll(() => render(true));
+    if (R.text.trim()) {
+      const d = R.done || {}, u = R.usage || {};
+      const bits = [];
+      if (opts.when) bits.push(opts.when);
+      if (R.stopped) bits.push('stopped');
+      if (d.elapsed_ms) bits.push(MR.fmt.secs(d.elapsed_ms));
+      if (d.tokens_per_s) bits.push(d.tokens_per_s + ' tok/s');
+      if (u.prompt_tokens != null) bits.push(MR.fmt.n(u.prompt_tokens) + ' in / ' + MR.fmt.n(u.completion_tokens || 0) + ' out');
+      R.foot.innerHTML = bits.map((b) => '<span>' + MR.esc(b) + '</span>').join('') + '<button type="button" data-copy-answer>copy answer</button>';
+    } else if (R.stopped) {
+      R.foot.innerHTML = '<span>stopped</span>';
+    }
+  };
+  return { turn, R, line, onEvent, finish };
+};
+
+/* a saved turn (from the history) drawn again: its trace events, then the answer, then the closing figures */
+MR.replayTurn = function (t) {
+  const when = new Date(t.created * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const T = MR.beginTurn(t.question, { replay: true, model: t.model, when });
+  const early = ['rewrite', 'expand', 'sources', 'context'];
+  (t.events || []).filter((e) => early.includes(e.type)).forEach(T.onEvent);
+  if (t.answer) T.onEvent({ type: 'status', text: 'generating' });
+  if (t.thinking) T.onEvent({ type: 'thinking', text: t.thinking });
+  if (t.answer) T.onEvent({ type: 'token', text: t.answer });
+  (t.events || []).filter((e) => !early.includes(e.type)).forEach(T.onEvent);
+  T.R.stopped = !!t.stopped;
+  T.finish();
+  return T;
+};
+
+MR.ask = async function (q) {
+  const S = MR.S;
+  if (S.streaming) return;
+  if (!S.profile) { MR.openConnect(); return; }
+  const libs = Array.from(S.selected);
+  if (!libs.length) { MR.toast('Select at least one library in the sidebar first.', 'err'); return; }
+  MR._lastQ = q;
+  const T = MR.beginTurn(q), R = T.R;
+  S.chat.turns += 1;
+  MR.renderViewTabs();
+  S.streaming = true; S.ctx.loading = true; MR.updateGauge(); MR.updateScope(); MR.startSpin();
+  S.abort = new AbortController();
   try {
-    await MR.stream({ question: q, history: S.history.slice(-8), libraries: libs, profile_id: S.profile.id }, onEvent, S.abort.signal);
+    await MR.stream({ question: q, history: S.history.slice(-8), libraries: libs, profile_id: S.profile.id, chat_id: S.chat.id }, T.onEvent, S.abort.signal);
   } catch (e) {
     if (e.name === 'AbortError') { R.stopped = true; }
-    else { R.errored = true; line('gen', MR.esc(e.message), 'err'); }
+    else { R.errored = true; T.line('gen', MR.esc(e.message), 'err'); }
   }
-  cancelAnimationFrame(R.raf); R.raf = 0;
   S.streaming = false; S.ctx.loading = false; S.abort = null;
   MR.stopSpin();
-  MR.$$('.spin', turn).forEach((s) => { s.parentElement.innerHTML = R.stopped ? '■' : '✓'; });
-  MR.stickScroll(() => render(true));
-  if (R.text.trim()) {
-    S.history.push({ role: 'user', content: q }, { role: 'assistant', content: R.text });
-    const d = R.done || {}, u = R.usage || {};
-    const bits = [];
-    if (R.stopped) bits.push('stopped');
-    if (d.elapsed_ms) bits.push(MR.fmt.secs(d.elapsed_ms));
-    if (d.tokens_per_s) bits.push(d.tokens_per_s + ' tok/s');
-    if (u.prompt_tokens != null) bits.push(MR.fmt.n(u.prompt_tokens) + ' in / ' + MR.fmt.n(u.completion_tokens || 0) + ' out');
-    R.foot.innerHTML = bits.map((b) => '<span>' + MR.esc(b) + '</span>').join('') + '<button type="button" data-copy-answer>copy answer</button>';
-  } else if (R.stopped) {
-    R.foot.innerHTML = '<span>stopped</span>';
-  }
+  T.finish();
+  if (R.text.trim()) S.history.push({ role: 'user', content: q }, { role: 'assistant', content: R.text });
   MR.updateGauge(); MR.updateScope();
   MR.refreshModelInfo();
+  if (MR.history) MR.history.changed();               // the saved chat list (History view, recent chats) is out of date now
 };
 
 /* ------------------------------------------------------------------ sources */
@@ -321,6 +377,7 @@ MR.renderSources = function (R, turn) {
       <div class="c-foot"><span>${MR.esc(s.library)}</span>
         ${viewable ? '<button type="button" data-view>view source</button>' : ''}
         ${href ? `<a href="${MR.esc(href)}" target="_blank" rel="noopener noreferrer">${gh ? 'GitHub' : s.online_url ? 'open page' : 'open copy'} &#8599;</a>` : ''}
+        ${MR.bookmarks.btn(s, 'data-bm')}
         <span title="fusion score${s.cosine != null ? ', cosine ' + s.cosine : ''}">${s.score}</span></div></div>`;
   }).join('') + '</div>';
 };
@@ -333,7 +390,7 @@ MR.openViewer = async function (s) {
     const d = await MR.api(`/api/libraries/${encodeURIComponent(s.library_id)}/source?doc=${s.doc_id}`);
     const r = MR.rangeOf(s.anchor);
     const head = (extra) => `<div class="v-head"><div class="v-title">${MR.esc(d.title)}<div class="v-sub">${MR.esc([d.lang, r ? 'lines ' + r[0] + (r[1] !== r[0] ? '-' + r[1] : '') : '', s.library].filter(Boolean).join(' · '))}</div></div>
-      <button class="btn small quiet" id="v-copy" type="button">copy path</button>${d.online_url ? `<a class="btn small quiet" href="${MR.esc(d.online_url)}${s.anchor ? '#' + MR.esc(s.anchor) : ''}" target="_blank" rel="noopener noreferrer">open &#8599;</a>` : ''}
+      ${MR.bookmarks.btn(s, 'data-bm-viewer', 'btn small quiet')}<button class="btn small quiet" id="v-copy" type="button">copy path</button>${d.online_url ? `<a class="btn small quiet" href="${MR.esc(d.online_url)}${s.anchor ? '#' + MR.esc(s.anchor) : ''}" target="_blank" rel="noopener noreferrer">open &#8599;</a>` : ''}
       <button class="btn small quiet" id="v-close" type="button" aria-label="Close viewer">close</button></div>${extra}`;
     if (d.text == null) {
       v.innerHTML = head(`<div class="v-body" style="padding:16px;font-family:var(--sans)">This file is not plain text. ${d.file_url ? `<a href="${MR.esc(d.file_url)}" target="_blank" rel="noopener">Open it</a>.` : ''}</div>`);
@@ -359,6 +416,8 @@ MR.openViewer = async function (s) {
     }
     MR.$('#v-close').addEventListener('click', () => { v.hidden = true; });
     MR.$('#v-copy').addEventListener('click', () => MR.copy(d.title, 'Path copied'));
+    const bmb = MR.$('[data-bm-viewer]', v);
+    if (bmb) bmb.addEventListener('click', () => MR.bookmarks.toggle(s, bmb));
   } catch (e) {
     v.innerHTML = `<div class="v-head"><div class="v-title err">${MR.esc(e.message)}</div><button class="btn small quiet" id="v-close" type="button">close</button></div>`;
     MR.$('#v-close').addEventListener('click', () => { v.hidden = true; });
@@ -377,6 +436,12 @@ MR.wireTranscript = function () {
     if (cite && turn) {
       const card = MR.$(`.card[data-n="${cite.dataset.n}"]`, turn);
       if (card) { card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1400); }
+      return;
+    }
+    const bm = t.closest('[data-bm]');
+    if (bm && turn) {                                // the bookmark button under a source card
+      const s = turn._R.srcs.find((x) => x.n === +bm.closest('.card').dataset.n);
+      if (s) MR.bookmarks.toggle(s, bm);
       return;
     }
     const view = t.closest('[data-view]');

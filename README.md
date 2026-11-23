@@ -4,13 +4,25 @@ Ask questions about manuals and code repositories that are far larger than any m
 
 Perplexify downloads or reads your documentation (websites, PDFs, Markdown, folders) and source code (GitHub
 repositories or folders), cuts it into passages, and builds a search index on your computer. When you ask a question
-it finds the few passages that matter, hands only those to the cloud model you chose (ChatGPT, Claude, Gemini,
-DeepSeek or any OpenAI-compatible service), and shows the answer with citations you can open.
+it finds the few passages that matter, hands only those to the model you chose (a cloud model: ChatGPT, Claude, Gemini,
+DeepSeek or any OpenAI-compatible service; or a **local model that runs on your own computer**), and shows the answer
+with citations you can open.
 You can also **search without any model**: the Search tab combines meaning search and keyword search over the same index.
 
 - Everything is indexed locally. The built-in embedding model needs no key and works offline.
-- Only your question and the few retrieved excerpts leave the computer, and only to the provider you connected.
-- Libraries are separate: tick one, several or all of them in the sidebar for each question or search.
+- Only your question and the few retrieved excerpts leave the computer, and only to the provider you connected. With a
+  local model (see below) nothing leaves the computer at all.
+- Libraries are separate: tick one, several or all of them in the sidebar for each question or search. Each library shows
+  its size in passages and in approximate tokens.
+- Chats and searches are kept on this computer (the **History** tab): open an old chat with the sources it cited and
+  carry on, and get suggestions while you type, like a search engine's autocomplete but from your own history, plus
+  related searches under the results. History can be switched off and cleared from the History tab.
+- **Bookmarks** (next to Search): press *bookmark* under a source in an answer, a search result or the source viewer to
+  save it, then keep your bookmarks in folders of your own. Folders nest, open and close with an arrow like a file
+  system, and bookmarks (and folders) move by drag and drop or from a menu. Bookmarks are never cleared with the history.
+- A fresh installation answers with 30 passages per question (at most 10 from one page or file, 20 candidates per search
+  method, a 30,000-token excerpt budget), rewrites follow-up questions, searches with extra phrasings and reranks the
+  candidates (the small reranking model ships with the installer). All of it is adjustable in Settings > Search.
 
 ## Install and use
 
@@ -25,6 +37,34 @@ browser instead and keeps an icon in the tray (Open, Quit): everything else work
 Libraries, downloaded manuals and settings live in `%LOCALAPPDATA%\Perplexify`, outside the install folder, so
 upgrading or reinstalling never loses them. (Versions that were called Manual RAG kept their data in
 `%LOCALAPPDATA%\ManualRAG`; the first start moves it.) Uninstalling asks whether to delete them too.
+
+## Local models (no cloud, no key)
+
+Choose **Local model** next to ChatGPT, Claude and the others in *Connect a model* (or in Settings > Models) and the
+answers are written by a model that runs on this computer, through [llama.cpp](https://github.com/ggml-org/llama.cpp).
+Nothing is sent anywhere, there is no key and no cost. Small models are quick but make more mistakes than the cloud
+ones: the 7B and 8B models in the list are the most capable and need about 8 GB of free memory, the tiny ones run on
+almost anything.
+
+- **Models.** Pick a `.gguf` file you already have (it is used where it is and never copied), or download one of six
+  checked models from Hugging Face (0.5B to 8B, 0.5 to 5.3 GB; the first, Qwen2.5 0.5B, is for a quick test). Downloads
+  stop and resume, are verified against their published checksum, and are kept in `%LOCALAPPDATA%\Perplexify\llm`. The
+  panel lists memory needs and warns when a model is probably too big for the computer.
+- **Engine.** The installer ships llama.cpp (the program `llama-server.exe` and its libraries) in the folder `llama`
+  next to the app, so nothing about it is downloaded when the app runs. It adds about 86 MB to the installed app and
+  roughly 14 MB to the installer. It chooses the fastest CPU code for your processor when it starts and uses the graphics
+  card through Vulkan when there is one with room (Settings > Models: GPU use, Automatic or Off).
+- **How it runs.** The model loads when you ask the first question (a few seconds to a minute, the answer says so),
+  stays loaded while you work, and is unloaded when you quit. It listens on `127.0.0.1` only, on a free port, behind a key
+  made for that run, and it cannot outlive the app: Windows ends it with the app even if the app is killed.
+  Its log is `%LOCALAPPDATA%\Perplexify\logs\llama-server.log`.
+- **Context size.** *Automatic* picks 4,096 to 16,384 tokens from the memory of the computer; choose a larger or smaller
+  one in the same panel. A small window holds fewer passages (the excerpts get half of it), whatever *Passages per
+  question* says.
+- **From the source.** Running with `python -m perplexify app` there is no `llama` folder yet: press *Download engine* in
+  the Local model panel, or run `python -m perplexify download-llama` once. It fetches the build pinned in
+  `installer/pins.json`, checks its SHA-256 and unpacks it into `%LOCALAPPDATA%\Perplexify\llama`. (`PERPLEXIFY_LLAMA_DIR`
+  names another folder.)
 
 ## Work on it in VS Code
 
@@ -57,8 +97,12 @@ Common tweaks and where they live:
 | The window (size, title bar colour, file dialogs) | `perplexify/desktop.py` (its `THEMES` must equal `--bg`, `--text` and `--line` in the stylesheet: a test checks it) |
 | Interface behaviour | `perplexify/web/js/*.js` (`search.js` is the Search tab, `chat.js` the Ask tab, `dialogs.js` the dialogs) |
 | What the model is told, how answers cite | `perplexify/rag.py` (`SYSTEM_PROMPT`, `SYSTEM_PROMPT_CODE`) |
-| Defaults for passages per question, candidates, reranking | `perplexify/settings.py` (`RETRIEVAL_DEFAULTS`) |
+| Defaults for passages per question, candidates, reranking | `perplexify/settings.py` (`RETRIEVAL_DEFAULTS`; a settings file that still holds an earlier default set follows the new one) |
+| Chat and search history, suggestions, related searches | `perplexify/history.py` (storage and ranking), `history_api.py`, `perplexify/web/js/history.js`, `web/history.css` |
+| Bookmarks: folders, saved sources, the tree | `perplexify/bookmarks.py` (storage and rules: names, depth, moves), `bookmarks_api.py`, `perplexify/web/js/bookmarks.js`, `web/bookmarks.css` |
 | Providers, their default models and context windows | `perplexify/providers.py` |
+| Local models: the curated download list, how llama-server is started, memory hints | `perplexify/localllm.py` (`CATALOG`, `build_args`), `perplexify/llm/local.py` (the chat client), `local_api.py` (`/api/local/...`), `web/js/local.js` and `web/local.css` (the panel) |
+| Which llama.cpp build is shipped | `llama` in `installer/pins.json` (tag, zip, SHA-256; `localllm.py` keeps an equal copy, a test compares them) |
 | The quick-add documentation buttons | `perplexify/presets.py` |
 | The built-in embedding model | `DEFAULT_EMBEDDER` in `perplexify/settings.py` and `embedding_model` in `installer/pins.json` |
 | How code is split into passages | `perplexify/chunking.py` and `perplexify/loaders/code.py` |
@@ -108,10 +152,14 @@ More detail, including silent-install switches and code signing, is in [installe
 perplexify/            the app (Python)
   web/                the user interface: index.html, style.css, js/*.js
   loaders/            HTML, PDF, text and code readers (tree-sitter for code)
-  llm/                Claude, OpenAI-compatible (ChatGPT, DeepSeek...) and Gemini clients
+  llm/                Claude, OpenAI-compatible (ChatGPT, DeepSeek...), Gemini and local (llama.cpp) clients
   embeddings/         built-in (fastembed) and cloud embedding back ends
   retrieval.py        meaning + keyword search, fusion, optional reranking
   rag.py              prompts, excerpt packing, citations
+  history.py          saved chats (with their sources) and searches, suggestions, related queries (history.db)
+  bookmarks.py        bookmarked sources in nested folders (bookmarks.db)
+  localllm.py         local models: finding and downloading the llama.cpp engine, running it as a child process, model files and downloads
+  local_api.py        the web API for local models (/api/local/...)
   server.py           the local web API (127.0.0.1 only)
   desktop.py          the app's own window (pywebview + WebView2): size, title bar, native dialogs
   app.py              starting and stopping: the window, or the browser + tray.py when no window is possible
@@ -130,7 +178,9 @@ Installed, the bundled Python runs the same command line the source uses:
 "%LOCALAPPDATA%\Programs\Perplexify\runtime\python.exe" -m perplexify --help
 ```
 
-`add-docs`, `add-repo`, `list`, `search`, `ask`, `connect`, `app`, `serve`, `stop` and `selftest` are available.
+`add-docs`, `add-repo`, `list`, `search`, `ask`, `connect`, `app`, `serve`, `stop`, `selftest` and `download-llama` are
+available. (`connect local --model <file.gguf>` uses a model file as the local model; `download-llama` fetches the
+engine for local models when you run from the source.)
 (`app` is what the Start menu shortcut runs: add `--browser` to use the browser instead of the window, `--debug` for the
 inspector and reload shortcuts, `--port N` for another port.)
 `python -m perplexify mcp` runs a stdio MCP server, so tools that speak MCP can search your libraries. Point such a tool
@@ -148,7 +198,30 @@ MCP clients yet.)
 - **Perplexify opens in the browser instead of its own window.** The Microsoft Edge WebView2 Runtime is missing or
   could not load; `perplexify.log` says which. Install it from <https://developer.microsoft.com/microsoft-edge/webview2>
   (Evergreen Bootstrapper) and start the app again. `python -m perplexify selftest` reports the window check too.
-- **Using it offline.** Everything except the cloud model works offline, including search; the built-in embedding
-  model ships inside the installer.
+- **Using it offline.** Everything except a cloud model works offline, including search and local models; the
+  built-in embedding model and the llama.cpp engine ship inside the installer (a local model's own file must be on the
+  computer first).
+- **A local model does not load or is slow.** The panel says why (not enough memory, a model type the bundled llama.cpp
+  does not know, a damaged download). `%LOCALAPPDATA%\Perplexify\logs\llama-server.log` has the engine's own messages. Try
+  a smaller model or a smaller context size, or switch *GPU use* to Off if the graphics driver misbehaves. Answers
+  start after the whole prompt has been read, which on a CPU takes long for a big context size.
 
-The macOS installer (a DMG built by a GitHub Actions workflow) is not part of this repository yet.
+## macOS installer (built on GitHub)
+
+A Mac cannot be built from a Windows PC, so the macOS app is built by a GitHub Actions workflow,
+`.github/workflows/macos-installer.yml`:
+
+1. Push this project to GitHub.
+2. Open the repository's **Actions** tab, choose **macOS installer**, then **Run workflow**. (Pushing a tag such as
+   `v0.1.0` starts it too and attaches the DMGs to that release.)
+3. When it finishes, download the artifact `Perplexify-macos-arm64` (Apple Silicon) and, if it built,
+   `Perplexify-macos-x64` (Intel). Each holds a `.dmg` and its checksum.
+
+The workflow builds `Perplexify.app` with PyInstaller (`installer/macos/Perplexify.spec`), puts the embedding models and
+llama.cpp (the local-model engine, checked against `installer/pins.json`) inside it, runs the app's self-test and a web
+server check on the finished bundle, and only then makes the disk image. Without signing secrets the app is signed ad hoc:
+on first start macOS says it cannot verify the developer; open *System Settings > Privacy & Security* and choose
+*Open Anyway*. Signing with a Developer ID and notarization are built in; see `installer/README.md`.
+
+This workflow has not been run yet (there is no Mac here): expect to fix a thing or two on its first run, and read the
+log of the first failing step.

@@ -57,6 +57,18 @@ CHAT_PROVIDERS: list[dict] = [
         "embeddings_note": "DeepSeek has no embeddings API, so the built-in embedding model is used.",
     },
     {
+        # A model that runs on this computer through llama.cpp (perplexify/localllm.py starts the engine on demand). It has no
+        # server address and no key: the address and a per-run key are worked out when a question is asked, because the engine
+        # listens on a different free port every time (perplexify/llm/local.py).
+        "id": "local", "name": "Local model", "company": "llama.cpp, on this computer", "kind": "openai",
+        "base_url": "", "key_url": "", "env": [], "key_hint": "",
+        "default_model": "", "preferred": [], "context_default": 8192,
+        "local": True,
+        "model_note": "Runs on this computer: nothing is sent anywhere. Smaller models answer quickly but make more mistakes.",
+        "embeddings": None,
+        "embeddings_note": "Local models have no embeddings service here, so the built-in embedding model is used.",
+    },
+    {
         "id": "custom", "name": "Other", "company": "OpenAI-compatible service", "kind": "openai",
         "base_url": "", "key_url": "", "env": [], "key_hint": "your service's key",
         "default_model": "", "preferred": [], "context_default": 128_000,
@@ -107,6 +119,13 @@ def get_chat_provider(provider_id: str) -> dict | None:
     key = (provider_id or "").strip().lower()
     return (next((p for p in CHAT_PROVIDERS if p["id"] == key), None)
             or next((p for p in CHAT_PROVIDERS if p["name"].lower() == key), None))
+
+
+def is_local(profile_or_id) -> bool:
+    """True for the "Local model" provider: a profile (dict) or a provider id. Local models need no API key, no network
+    and no cost or rate-limit handling, and their model is a file on this computer."""
+    pid = profile_or_id.get("provider") if isinstance(profile_or_id, dict) else profile_or_id
+    return str(pid or "").strip().lower() == "local"
 
 
 def detect_provider(key: str) -> str | None:
