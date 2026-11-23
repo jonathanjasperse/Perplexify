@@ -19,7 +19,7 @@ from perplexify import desktop, paths
 class FakeWindow:
     def __init__(self, title, url, **options):
         self.title, self.url, self.options = title, url, options
-        self.events = types.SimpleNamespace(closing=FakeEvent(), shown=FakeEvent())
+        self.events = types.SimpleNamespace(closing=FakeEvent(), shown=FakeEvent(), loaded=FakeEvent())
         self.width, self.height, self.x, self.y = 1100, 700, 40, 50
         self.native = types.SimpleNamespace(WindowState="Normal", Handle=types.SimpleNamespace(ToInt64=lambda: 0))
         self.destroyed = False

@@ -296,6 +296,7 @@ class NativeWindow:
         self._webview = None
         self._quitting = False
         self._shown = threading.Event()
+        self._loaded = threading.Event()      # the first page has finished loading
         self.theme = load_state().get("theme", "dark")
 
     # ---- what the server calls
@@ -362,6 +363,7 @@ class NativeWindow:
             self.window = webview.create_window(APP_NAME, self.url, **options)
             self.window.events.closing += self._on_closing
             self.window.events.shown += self._on_shown
+            self.window.events.loaded += self._loaded.set     # the microphone hook waits for this (see _wire_microphone)
             self._wire_microphone()
             start: dict = {"debug": self.debug, "private_mode": False,       # private mode would forget localStorage: the theme, the ticks
                            "storage_path": str(self._storage())}
@@ -403,6 +405,11 @@ class NativeWindow:
                 log.debug("could not answer a permission request", exc_info=True)
 
         def when_ready() -> None:
+            # Touching the WebView2 control while it is still starting up stops it from ever opening the page (the
+            # window stays blank on about:blank), so wait until the first page has loaded before looking at it.
+            while not self._loaded.wait(0.1):
+                if self._quitting:
+                    return
             # The form and its WebView2 control exist as soon as the window does; the Core shell follows a
             # moment later. Eight seconds is generous - it is always ready long before a question is asked.
             for _ in range(160):
