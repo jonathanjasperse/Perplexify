@@ -27,6 +27,7 @@
   --r-lg: 14px;        /* dialogs, popovers, panels */
   --ease: cubic-bezier(0.2, 0, 0, 1);   /* hovers and small state changes */
   --top-h: 52px;
+  --ring-icon: 15px;   /* the icon in the middle of the model ring (brain.svg) */
   --side-w: 312px;     /* wide enough for "5 pages  260 passages  ~61k tokens" on one line */
 }
 :root[data-read="serif"] { --read: var(--serif); --head: var(--serif); --read-size: 16.5px; --read-lh: 1.64; }
@@ -211,9 +212,11 @@ mark {
 /* The arc starts at 12 o'clock. That rotation is set here and not with a transform attribute on the circle: a CSS animation
    replaces the attribute but keeps the transform-origin, which threw the spinning arc far off the ring. */
 .ring .arc { stroke: var(--accent); transform: rotate(-90deg); transform-box: view-box; transform-origin: 16px 16px; transition: stroke-dashoffset 0.4s ease, stroke 0.2s; }
-/* the brain in the middle: outlines only, in the text colour (white in the dark theme), still while the arc turns */
-.ring .brain { fill: none; stroke: var(--text); stroke-width: 1; stroke-linecap: square; stroke-linejoin: miter; }
-.ring .brain circle { stroke-width: 0.9; }
+/* the icon in the middle of the ring is the file brain.svg (replace it with your own: SVG, PNG or WebP with a transparent
+   background). It is used as a mask, so its shape is painted in the text colour whatever colours the file has. */
+.ring-wrap { position: relative; flex: none; width: 32px; height: 32px; display: block; }
+.ring-icon { position: absolute; left: 50%; top: 50%; width: var(--ring-icon); height: var(--ring-icon); transform: translate(-50%, -50%);
+  background-color: var(--text); -webkit-mask: url("brain.svg") center / contain no-repeat; mask: url("brain.svg") center / contain no-repeat; pointer-events: none; }
 .ring.warn .arc { stroke: var(--warn); }
 .ring.err .arc { stroke: var(--err); }
 .ring.loading .arc { stroke-dasharray: 22 200 !important; stroke-dashoffset: 0 !important; transition: none; animation: ring-spin 1s linear infinite; }
