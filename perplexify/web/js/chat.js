@@ -259,6 +259,7 @@ MR.beginTurn = function (q, opts = {}) {
   /* the model stopped thinking (its answer began, or the turn ended): still the swirl and say how long it took */
   const endThinking = () => {
     if (!R.think.classList.contains('live')) return;
+    if (!R.thinking) { R.think.hidden = true; R.think.classList.remove('live', 'nothoughts'); return; }   // it never thought: nothing to show
     R.think.classList.remove('live');
     const secs = Math.max(1, Math.round((performance.now() - R.thinkT0) / 1000));
     MR.$('.t-label', R.think).textContent = 'Thought for ' + secs + 's';
@@ -274,7 +275,9 @@ MR.beginTurn = function (q, opts = {}) {
         MR.renderViewTabs();
         break;
       case 'status':
-        if (ev.text === 'generating') line('gen', '<b>' + MR.esc(model) + '</b> writing the answer', 'spin');
+        if (ev.text === 'generating') {                    // the model is working: the thinking animation, with no thoughts to open yet
+          if (!replay) { R.think.hidden = false; R.think.classList.add('live', 'nothoughts'); }
+        }
         else if (ev.text === 'loading_model') {            // a model on this computer is still being loaded into memory
           const secs = Math.round(ev.seconds || 0);
           line('load', 'Loading <b>' + MR.esc(ev.model || model) + '</b> into memory' + (secs >= 2 ? ' (' + secs + ' s)' : ''), 'spin');
@@ -318,7 +321,7 @@ MR.beginTurn = function (q, opts = {}) {
         break;
       }
       case 'thinking': {
-        R.thinking += ev.text; R.think.hidden = false;
+        R.thinking += ev.text; R.think.hidden = false; R.think.classList.remove('nothoughts');
         if (!replay && !R.thinkT0) { R.thinkT0 = performance.now(); R.think.classList.add('live'); }
         const tb = MR.$('.t-body', R.think);
         const stickT = tb.scrollHeight - tb.scrollTop - tb.clientHeight < 24;   // follow the stream unless the reader scrolled up

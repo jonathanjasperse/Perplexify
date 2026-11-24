@@ -475,6 +475,8 @@ input.input, select.input { height: 36px; }
 .swirl i:nth-child(1) { --swirl-a: 0deg; }
 .swirl i:nth-child(2) { --swirl-a: 120deg; }
 .swirl i:nth-child(3) { --swirl-a: 240deg; }
+.thinking.nothoughts summary { pointer-events: none; cursor: default; }     /* animating before any thought exists: nothing to open yet */
+.thinking.nothoughts .t-chev { display: none; }
 .thinking.live .swirl { animation: swirl-turn 1.4s cubic-bezier(0.55, 0.1, 0.45, 0.9) infinite; }
 .thinking.live .swirl i { opacity: 1; box-shadow: 0 0 6px var(--accent); animation: swirl-breathe 1.4s ease-in-out infinite; }
 .thinking.live .swirl i:nth-child(2) { animation-delay: -0.23s; }

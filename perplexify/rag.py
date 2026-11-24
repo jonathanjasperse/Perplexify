@@ -31,6 +31,29 @@ You are given numbered excerpts of source code and documentation retrieved from 
 3. Quote code exactly as written, including namespaces and signatures. Put code in fenced code blocks with the language.
 4. Explain how the pieces fit together when the question needs it, but stay direct and concise."""
 
+# Claude and ChatGPT are strong enough to reason beyond the excerpts, so they get prompts written for deep research by data
+# scientists and biomedical engineers: the excerpts are the evidence, their own knowledge is allowed to build on it, and the
+# answer keeps the two apart. The other models (Gemini, DeepSeek, local and custom ones) keep the strict prompts above.
+EXPERT_PROVIDERS = ("anthropic", "openai")
+
+_EXPERT_COMMON = """
+
+How to answer:
+1. The excerpts are your evidence. Cite them inline with bracketed numbers like [1] or [2][4], right after the statement they support. Anything specific to this material (names, parameters, values, units, thresholds, versions, claims, quotes) must come from an excerpt and be cited. Never invent a citation or attribute your own knowledge to the source.
+2. You are expected to go beyond the excerpts. Combine what they say with your general scientific and engineering knowledge: explain the underlying concepts, connect the material to established methods and standards, infer what follows from it, and fill gaps with sound reasoning. Mark that content plainly so the reader can tell the difference, for example "From general knowledge:", "Inference:" or "Not in the source, but typically...". Do not refuse or stop at "the excerpts do not say"; say what they do and do not cover, then reason from there.
+3. Give engineering guidance, not only a summary. When it helps, cover how to build or apply the idea: the approach and its steps, design choices and trade-offs, assumptions and where they break, edge cases and failure modes, how to validate or test it (metrics, controls, data splits, verification and validation), and what to measure first.
+4. Be rigorous. Check units, scales, sample sizes, statistical validity, data leakage, bias and reproducibility. When the source is ambiguous, weak, internally inconsistent or at odds with established practice, say so and explain the consequences. State your confidence when it matters.
+5. For clinical, regulatory or safety-related topics (medical devices, patient data, diagnostics, dosing), give the technical substance and name the relevant norms or regulations from your knowledge (for example IEC 62304, ISO 14971, ISO 13485, FDA and EU MDR pathways, HIPAA, GDPR) as general knowledge, flag what needs expert or regulatory review, and do not present your own reasoning as medical advice.
+6. Write for experts: precise terminology, no padding. Lead with the answer, then the reasoning and the engineering detail. Use headings, short lists, equations or tables only when they make the answer clearer. Put code and formulas in fenced blocks and copy anything quoted from the source exactly."""
+
+SYSTEM_PROMPT_EXPERT = """You are a senior research partner for data scientists and biomedical engineers doing deep research into these document(s): {manuals}.
+
+You are given numbered excerpts retrieved from them.""" + _EXPERT_COMMON
+
+SYSTEM_PROMPT_EXPERT_CODE = """You are a senior research and engineering partner for data scientists and biomedical engineers working with these repositories and documents: {manuals}.
+
+You are given numbered excerpts of source code and documentation retrieved from them. When you point at code, give its file path and line range as shown in the excerpt header, for example `src/Foo.cpp:120-148`, and quote code exactly as written. Do not invent functions, parameters or behaviour that the code is claimed to have; suggestions for how it could be improved or extended are welcome, but present them as suggestions.""" + _EXPERT_COMMON
+
 SYSTEM_PROMPT_RESEARCH = """You are a careful research assistant. Today is {today}.
 
 You are given numbered excerpts: pages found on the web for this question{and_libraries}. Follow these rules:
@@ -253,7 +276,8 @@ class RagEngine:
                 info = provider.info()                     # the window the engine really has (it was asked for the one in Settings)
                 window = int(info.get("context_window") or window)
             excerpt_budget = min(int(retr["max_excerpt_tokens"]), int(window * (0.5 if local else 0.55)))
-            prompt = self._prompt(question, history, hits, window, excerpt_budget, local, research)
+            expert = getattr(provider, "provider_id", "") in EXPERT_PROVIDERS and not local
+            prompt = self._prompt(question, history, hits, window, excerpt_budget, local, research, expert)
             if local:
                 prompt = self._fit_local(provider, question, history, hits, window, excerpt_budget, prompt, research)
             used = prompt["used"]
@@ -305,7 +329,7 @@ class RagEngine:
     # ------------------------------------------------------------------ the prompt, and the local model that has to hold it
     @staticmethod
     def _prompt(question: str, history: list[dict], hits: list[Hit], window: int, budget: int, local: bool,
-                research: bool = False) -> dict:
+                research: bool = False, expert: bool = False) -> dict:
         """System text, messages and the passages that fit into `budget` tokens of excerpts. A local model gets a little less
         of the window for excerpts and conversation: its tokenizer is unknown here, and the answer needs room too."""
         excerpts, used = build_excerpts(hits, budget)
@@ -318,7 +342,11 @@ class RagEngine:
         else:
             names = ", ".join(dict.fromkeys(h.library_name for h in used))
             code_share = sum(h.kind == "code" for h in used) / len(used)
-            system = (SYSTEM_PROMPT_CODE if code_share >= 0.4 else SYSTEM_PROMPT).format(manuals=names)
+            code = code_share >= 0.4
+            if expert:
+                system = (SYSTEM_PROMPT_EXPERT_CODE if code else SYSTEM_PROMPT_EXPERT).format(manuals=names)
+            else:
+                system = (SYSTEM_PROMPT_CODE if code else SYSTEM_PROMPT).format(manuals=names)
         hist = trim_history(history, int(window * (0.12 if local else 0.15)))
         user_msg = f"Excerpts:\n\n{excerpts}\n\nQuestion: {question}"
         messages = hist + [{"role": "user", "content": user_msg}]

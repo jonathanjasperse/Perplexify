@@ -186,7 +186,7 @@ class ServerAPI(TempHome):
         with mock.patch("perplexify.retrieval.get_embedder", lambda spec, settings=None: FakeEmbedder()), \
                 mock.patch("perplexify.rag.make_provider", llm), mock.patch("perplexify.context.make_provider", llm):
             self.client.post("/api/chat", json={"question": "renderBlock", "libraries": [lib.id]})
-        self.assertIn("code assistant", seen["system"])
+        self.assertIn("engineering partner", seen["system"])        # the connected model here is Claude: the expert code prompt
         self.assertIn("src/mixer.cpp:", seen["user"])
         self.assertIn("```cpp", seen["user"])
 
