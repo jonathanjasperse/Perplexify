@@ -227,6 +227,22 @@ def run(skip_embed: bool = False) -> int:
         gpu = ", ".join(localllm.gpu_backends(eng.dir)) or "CPU only"
         return f"llama.cpp {version} from {eng.dir} ({eng.source}; {gpu})"
 
+    def speech():
+        """Dictation: the engine and its model load and run. Running from the source without the model is not a failure (it is
+        downloaded on first use); an installation without it is, because the installer ships it."""
+        import numpy as np
+
+        from . import dictation, localllm
+
+        if not dictation.available():
+            raise AssertionError("faster-whisper is not installed")
+        if not dictation.model_ready():
+            if localllm.installed_layout():
+                raise AssertionError(f"the speech model is missing from the installation (expected {dictation.model_dir()})")
+            return "model not on this computer yet (it is downloaded when dictation is first used)"
+        text = dictation.transcribe(np.zeros(16000, dtype=np.float32) + 1e-4 * np.random.default_rng(1).standard_normal(16000).astype(np.float32))
+        return f"Whisper base loaded and ran on a second of silence ({'heard nothing' if not text else repr(text)})"
+
     check("runtime", python_info)
     check("sqlite full-text search", sqlite_fts5)
     check("code grammars", grammars)
@@ -237,6 +253,7 @@ def run(skip_embed: bool = False) -> int:
         check("built-in embeddings + hybrid search", embed_and_search)
     check("web app", web_app)
     check("local engine", local_engine)
+    check("speech to text", speech)
     check("app window", window_support)
 
     width = max(len(n) for n, _, _ in results)

@@ -44,8 +44,8 @@ def flatten_symlinks(root: Path) -> None:
             shutil.rmtree(blobs, ignore_errors=True)
 
 
-def download_model(model_name: str, dest: Path, reranker: str | None = None) -> None:
-    """Download an embedding model (and optionally a reranker) into `dest` (used by the installer builds)."""
+def download_model(model_name: str, dest: Path, reranker: str | None = None, whisper: bool = False) -> None:
+    """Download an embedding model (and optionally a reranker and the speech model) into `dest` (used by the installer builds)."""
     from fastembed import TextEmbedding
 
     dest.mkdir(parents=True, exist_ok=True)
@@ -58,4 +58,8 @@ def download_model(model_name: str, dest: Path, reranker: str | None = None) -> 
 
         ce = TextCrossEncoder(model_name=reranker, cache_dir=str(dest))
         list(ce.rerank("warm-up", ["warm-up"]))
+    if whisper:
+        from . import dictation
+
+        dictation.download_model(dest)
     flatten_symlinks(dest)

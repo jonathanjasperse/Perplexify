@@ -10,7 +10,7 @@ root = Path(SPECPATH).resolve().parents[1]
 version = re.search(r'__version__\s*=\s*"(\d+\.\d+\.\d+)"', (root / "perplexify" / "__init__.py").read_text("utf-8")).group(1)
 
 # Packages whose compiled parts or data files PyInstaller cannot see from the import statements alone.
-packages = ["fastembed", "onnxruntime", "tokenizers", "webview", "tree_sitter", "py_rust_stemmers", "certifi"]
+packages = ["fastembed", "faster_whisper", "ctranslate2", "av", "onnxruntime", "tokenizers", "webview", "tree_sitter", "py_rust_stemmers", "certifi"]
 # one compiled grammar per language: read from requirements.txt so a new language needs no change here
 packages += [m.group(1).replace("-", "_") for m in
              (re.match(r"(tree-sitter-[a-z0-9-]+)", ln) for ln in (root / "requirements.txt").read_text("utf-8").splitlines()) if m]

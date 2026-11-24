@@ -83,6 +83,8 @@ def main() -> int:
         "Components that are not Python packages:\n"
         "  - Python (runtime): Python Software Foundation License, see runtime\\LICENSE.txt\n"
         + (f"  - {model}: embedding model, MIT licence (ONNX conversion by Qdrant, run through fastembed)\n" if model else "")
+        + "  - Whisper base (Systran/faster-whisper-base, in the folder models): the speech-to-text model behind dictation, MIT licence (OpenAI Whisper; CTranslate2 conversion run through faster-whisper)
+"
         + (f"  - {reranker}: reranking model, Apache License 2.0 (ONNX conversion run through fastembed)\n" if reranker else "")
         + ("  - llama.cpp (llama-server and its libraries, in the folder llama): the engine that runs local models, MIT licence;\n"
            "    its OpenMP runtime (libomp.dll) is under the LLVM licence, see llama\\LICENSE-LLVM-OpenMP\n" if llama else "")

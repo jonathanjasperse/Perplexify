@@ -220,7 +220,9 @@ def cmd_serve(a) -> int:
 def cmd_download_model(a) -> int:
     from .models import download_model
 
-    download_model(a.model, Path(a.dest), a.reranker or None)
+    from . import paths
+
+    download_model(a.model, Path(a.dest) if a.dest else paths.models_dir(), a.reranker or None, whisper=a.whisper)
     print(f"Model files are in {a.dest}")
     return 0
 
@@ -308,10 +310,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("question")
     s.add_argument("-l", "--library", action="append")
 
-    s = sub.add_parser("download-model", help="download the built-in embedding model (used when building installers)")
-    s.add_argument("--dest", required=True)
+    s = sub.add_parser("download-model", help="download the built-in embedding model, and with --whisper the speech model for dictation (used when building installers)")
+    s.add_argument("--dest", help="where to put them (default: this app's models folder)")
     s.add_argument("--model", default="BAAI/bge-small-en-v1.5")
     s.add_argument("--reranker")
+    s.add_argument("--whisper", action="store_true", help="also download the speech model that dictation uses (145 MB)")
 
     s = sub.add_parser("download-llama", help="download the llama.cpp engine for local models (needed when running from the source; the installer ships it)")
     s.add_argument("--dest", help="folder for the engine (default: the 'llama' folder in the data folder)")

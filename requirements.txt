@@ -34,6 +34,9 @@ tree-sitter-lua>=0.4
 # built-in embedding model (runs inside the app; no key needed)
 fastembed>=0.5,<1
 
+# dictation (speech to text on this computer: Whisper through CTranslate2; the model itself is bundled by the installer)
+faster-whisper>=1.1,<2
+
 # app shell
 pywebview>=6.0,<7      # the app's own window: Microsoft Edge WebView2 on Windows (through pythonnet), WKWebView on macOS
 truststore>=0.9

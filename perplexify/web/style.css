@@ -621,6 +621,8 @@ input.input, select.input { height: 36px; }
 .mic-btn.unsupported { opacity: 0.45; }                  /* no speech recognition here (e.g. Firefox) */
 .mic-btn.listening { color: var(--err); background: var(--btn); animation: mic-pulse 1.5s ease-out infinite; }
 .mic-btn.listening svg { stroke-width: 2; }
+.mic-btn.busy { color: var(--accent); cursor: progress; animation: mic-busy 0.9s ease-in-out infinite alternate; }   /* the recording is being turned into words */
+@keyframes mic-busy { from { opacity: 0.4; } to { opacity: 1; } }
 @keyframes mic-pulse {
   0%   { box-shadow: 0 0 0 0 rgba(var(--rec-pulse), 0.45); }
   70%  { box-shadow: 0 0 0 9px rgba(var(--rec-pulse), 0); }
@@ -717,7 +719,7 @@ input.input, select.input { height: 36px; }
   .brand .ver { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin, .mic-btn.listening, .card.flash,
+  .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin, .mic-btn.listening, .mic-btn.busy, .card.flash,
   .thinking.live .swirl, .thinking.live .swirl i, .thinking.live .t-label, .overlay, .modal, .toast { animation: none; }
   .ring .arc, .bar > i, .card, .card:hover { transition: none; transform: none; }
 }

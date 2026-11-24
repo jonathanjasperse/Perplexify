@@ -261,14 +261,14 @@ try {
     Copy-Item -LiteralPath $Ico -Destination (Join-Path $Stage 'app.ico') -Force
 
     # ------------------------------------------------------------------ embedding model
-    Step "Models: embedding $($Pins.embedding_model), reranking $($Pins.reranker_model)"
-    $ModelCache = Join-Path $Cache ('models-' + (($Pins.embedding_model + '+' + $Pins.reranker_model) -replace '[^A-Za-z0-9.+-]', '_'))
+    Step "Models: embedding $($Pins.embedding_model), reranking $($Pins.reranker_model), speech (dictation)"
+    $ModelCache = Join-Path $Cache ('models-' + (($Pins.embedding_model + '+' + $Pins.reranker_model + '+whisper-base') -replace '[^A-Za-z0-9.+-]', '_'))
     # two models: the one that embeds passages and the cross-encoder that reranks them (reranking is on by default, so it ships too)
-    $haveModel = (Test-Path -LiteralPath $ModelCache) -and (@(Get-ChildItem -LiteralPath $ModelCache -Recurse -File -Filter '*.onnx').Count -ge 2)
+    $haveModel = (Test-Path -LiteralPath $ModelCache) -and (@(Get-ChildItem -LiteralPath $ModelCache -Recurse -File -Filter '*.onnx').Count -ge 2) -and (Test-Path -LiteralPath (Join-Path $ModelCache 'whisper-base\model.bin'))
     if (-not $haveModel) {
         if (Test-Path -LiteralPath $ModelCache) { Remove-Item -LiteralPath $ModelCache -Recurse -Force }
-        Info 'downloading (about 90 MB, once)'
-        Run $RuntimePy @('-P', '-m', 'perplexify', 'download-model', '--dest', $ModelCache, '--model', $Pins.embedding_model, '--reranker', $Pins.reranker_model)
+        Info 'downloading (about 235 MB, once: 90 MB for search, 145 MB for dictation)'
+        Run $RuntimePy @('-P', '-m', 'perplexify', 'download-model', '--dest', $ModelCache, '--model', $Pins.embedding_model, '--reranker', $Pins.reranker_model, '--whisper')
     } else { Info 'cached' }
     Mirror $ModelCache (Join-Path $Stage 'models')
 

@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from fastapi import FastAPI, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, github, osutil, paths, providers, tasks, websearch
+from . import __version__, dictation, github, osutil, paths, providers, tasks, websearch
 from .context import AppContext
 from .embeddings import EmbeddingError, validate_embedder
 from .bookmarks_api import make_router as bookmarks_router
@@ -664,6 +665,43 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
             response = await super().get_response(path, scope)
             response.headers["Cache-Control"] = "no-cache"
             return response
+
+    # ------------------------------------------------------------------ dictation (speech to text on this computer)
+    @app.get("/api/dictation")
+    def dictation_status():
+        return dictation.status()
+
+    @app.post("/api/dictation/prepare")
+    def dictation_prepare():
+        """Download the speech model (only when it is not on this computer yet; the installer ships it)."""
+        st = dictation.status()
+        if not st["available"]:
+            raise HTTPException(400, "Dictation is not installed in this copy of Perplexify.")
+        if st["model_ready"]:
+            return {"ready": True}
+        for j in ctx.jobs.list():
+            if j["kind"] == "speech-model" and j["status"] in ("queued", "running"):
+                return {"ready": False, "job": j}
+        def run(job):
+            job.update(phase="download", message=f"about {dictation.MODEL_MB} MB, once")
+            try:
+                dictation.download_model(progress=lambda m: job.update(message=m))
+            except Exception as e:  # noqa: BLE001 - shown as the job's error
+                raise RuntimeError(f"Could not download the speech model: {e}") from e
+        return {"ready": False, "job": ctx.jobs.submit("speech-model", "Download the speech model", None, run).to_dict()}
+
+    @app.post("/api/dictation/transcribe")
+    async def dictation_transcribe(request: Request, language: str = "", hint: str = ""):
+        """Body: the recording as raw little-endian float32 samples, mono, 16 kHz. Answer: {"text": "..."}"""
+        data = await request.body()
+        try:
+            samples = dictation.samples_from_bytes(data)
+            if not dictation.model_ready():
+                raise HTTPException(409, "The speech model is not on this computer yet.")
+            text = await run_in_threadpool(dictation.transcribe, samples, language or None, hint[:300])
+        except dictation.DictationError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"text": text}
 
     web = paths.web_dir()
     if (web / "index.html").exists():
