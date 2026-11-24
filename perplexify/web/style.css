@@ -211,6 +211,9 @@ mark {
 /* The arc starts at 12 o'clock. That rotation is set here and not with a transform attribute on the circle: a CSS animation
    replaces the attribute but keeps the transform-origin, which threw the spinning arc far off the ring. */
 .ring .arc { stroke: var(--accent); transform: rotate(-90deg); transform-box: view-box; transform-origin: 16px 16px; transition: stroke-dashoffset 0.4s ease, stroke 0.2s; }
+/* the brain in the middle: outlines only, in the text colour (white in the dark theme), still while the arc turns */
+.ring .brain { fill: none; stroke: var(--text); stroke-width: 1; stroke-linecap: square; stroke-linejoin: miter; }
+.ring .brain circle { stroke-width: 0.9; }
 .ring.warn .arc { stroke: var(--warn); }
 .ring.err .arc { stroke: var(--err); }
 .ring.loading .arc { stroke-dasharray: 22 200 !important; stroke-dashoffset: 0 !important; transition: none; animation: ring-spin 1s linear infinite; }

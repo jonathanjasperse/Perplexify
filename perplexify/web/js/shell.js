@@ -10,6 +10,13 @@ MR.renderTop = function () {
          <svg class="ring" id="ring" viewBox="0 0 32 32" aria-hidden="true">
            <circle class="track" cx="16" cy="16" r="13"/>
            <circle class="arc" id="ring-arc" cx="16" cy="16" r="13"/>
+           <g class="brain" transform="translate(7 7) scale(0.75)">
+             <path d="M12 4H9L7 6H5.5L4 7.5V10L5.5 11.5L4 13V15.5L6 17.5H8L10 19.5H12V4"/>
+             <path d="M12 4H15L17 6H18.5L20 7.5V10L18.5 11.5L20 13V15.5L18 17.5H16L14 19.5H12"/>
+             <path d="M12 8H10L8 10M12 14H9.5V15.5M12 6.5H14L16 8.5V10M12 11.5H15L16.5 13M12 16.5H14.5"/>
+             <circle cx="7.300" cy="10.700" r="0.900"/><circle cx="9.500" cy="16.400" r="0.900"/><circle cx="16" cy="11" r="0.900"/>
+             <circle cx="17.200" cy="13.700" r="0.900"/><circle cx="15.400" cy="16.500" r="0.900"/>
+           </g>
          </svg>
          <span class="names"><span class="prov">${MR.esc(p.name)}</span><span class="model" id="chip-model">${MR.esc(p.model || 'choose a model')}</span></span>
          <span class="figures"><span id="fig-used"></span><span id="fig-pct"></span></span>

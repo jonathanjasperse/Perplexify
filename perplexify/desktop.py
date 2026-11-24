@@ -296,7 +296,6 @@ class NativeWindow:
         self._webview = None
         self._quitting = False
         self._shown = threading.Event()
-        self._loaded = threading.Event()      # the first page has finished loading
         self.theme = load_state().get("theme", "dark")
 
     # ---- what the server calls
@@ -363,7 +362,6 @@ class NativeWindow:
             self.window = webview.create_window(APP_NAME, self.url, **options)
             self.window.events.closing += self._on_closing
             self.window.events.shown += self._on_shown
-            self.window.events.loaded += self._loaded.set     # the microphone hook waits for this (see _wire_microphone)
             self._wire_microphone()
             start: dict = {"debug": self.debug, "private_mode": False,       # private mode would forget localStorage: the theme, the ticks
                            "storage_path": str(self._storage())}
@@ -404,31 +402,26 @@ class NativeWindow:
             except Exception:  # noqa: BLE001
                 log.debug("could not answer a permission request", exc_info=True)
 
-        def when_ready() -> None:
-            # Touching the WebView2 control while it is still starting up stops it from ever opening the page (the
-            # window stays blank on about:blank), so wait until the first page has loaded before looking at it.
-            while not self._loaded.wait(0.1):
-                if self._quitting:
-                    return
-            # The form and its WebView2 control exist as soon as the window does; the Core shell follows a
-            # moment later. Eight seconds is generous - it is always ready long before a question is asked.
-            for _ in range(160):
-                if self._quitting:
-                    return
-                try:
-                    control = getattr(self.window, "native", None)
-                    control = getattr(control, "webview", None)
-                    core = control.CoreWebView2 if control is not None else None
-                    if core is not None:
-                        core.PermissionRequested += on_permission
-                        log.debug("microphone requests from the interface are allowed (speech to text)")
-                        return
-                except Exception:  # noqa: BLE001   the shell is not ready yet, or something is not there
-                    pass
-                time.sleep(0.05)
-            log.debug("the WebView2 core never appeared, so speech to text stays a browser feature")
+        attached: list[bool] = []
 
-        threading.Thread(target=when_ready, daemon=True, name="perplexify-microphone").start()
+        def attach() -> None:
+            # Runs ON the window's own UI thread (pywebview fires before_load synchronously from the navigation
+            # callback), when the WebView2 core exists. It must never be done from another thread: pythonnet keeps the
+            # Python lock while it waits for the UI thread, and the UI thread is waiting for that lock to run its own
+            # Python callbacks - the window then freezes ("Not Responding") or never leaves about:blank.
+            if attached:
+                return
+            try:
+                control = getattr(getattr(self.window, "native", None), "webview", None)
+                core = control.CoreWebView2 if control is not None else None
+                if core is not None:
+                    core.PermissionRequested += on_permission
+                    attached.append(True)
+                    log.debug("microphone requests from the interface are allowed (speech to text)")
+            except Exception:  # noqa: BLE001
+                log.debug("could not answer permission requests, so speech to text stays a browser feature", exc_info=True)
+
+        self.window.events.before_load += attach
 
     # ---- events (the closing one runs on the window's own thread: nothing in it may wait for that thread)
     def _on_shown(self) -> None:
