@@ -26,7 +26,7 @@ MR.renderWelcomeIfEmpty = function () {
   const questions = hasLibs ? [
     'How do I get started?', 'Which function should I call to...', 'Explain how ... works, with an example',
     'Where is ... implemented?'] : [];
-  tr.innerHTML = `<div class="column welcome">
+  const html = `<div class="column welcome">
     <h1>Ask your manuals and your code.</h1>
     <p>Perplexify indexes documentation and source code on this computer, finds the passages that matter for each question,
        and asks the cloud model you choose to answer from them, with citations you can open. The material can be far larger than
@@ -43,6 +43,13 @@ MR.renderWelcomeIfEmpty = function () {
     <div class="w-recent" id="w-recent"></div>
     ${hasLibs ? '<p class="hint" style="margin-top:18px">Rather read the passages yourself? <a href="#" id="w-search">Search without a model</a>: meaning and keyword search of the ticked libraries.</p>' : ''}
   </div>`;
+  // This runs every second while a download or an embedding job is working. Redrawing an unchanged page would throw the
+  // reader back to the top and empty "Recent chats" until it is fetched again, so an identical page is left alone and a
+  // changed one keeps its scroll position.
+  if (tr._welcomeHtml === html && tr.querySelector('.welcome')) return;
+  const keepScroll = tr.scrollTop;
+  tr.innerHTML = html;
+  tr._welcomeHtml = html;
   const on = (id, fn) => { const b = MR.$(id, tr); if (b) b.addEventListener('click', fn); };
   on('#w-search', (e) => { e.preventDefault(); MR.setView('search'); });
   on('#w-connect', () => MR.openConnect());
@@ -50,6 +57,7 @@ MR.renderWelcomeIfEmpty = function () {
   on('#w-preset', () => MR.addPreset(preset));
   MR.$$('[data-q]', tr).forEach((b) => b.addEventListener('click', () => { const t = MR.$('#prompt'); t.value = b.dataset.q; t.focus(); MR.autosize(); }));
   MR.updateBanner();
+  tr.scrollTop = keepScroll;
   if (MR.history) MR.history.fillRecent();            // "Recent chats", when there are any
 };
 

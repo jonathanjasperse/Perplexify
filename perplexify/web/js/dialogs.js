@@ -522,7 +522,7 @@ MR.libMenu = function (id, anchor) {
     ['refresh', 'Refresh from sources', !busy && lib.sources && lib.sources.length],
     ['resume', 'Finish embedding', !busy && lib.pending > 0],
     ['embedder', 'Change embedding model...', !busy && lib.chunks > 0],
-    ['details', 'Details', true], ['rename', 'Rename...', true], ['---'], ['delete', 'Delete...', !busy],
+    ['details', 'Details', true], ['rename', 'Rename...', true], ['---'], ['delete', 'Delete...', true],
   ].filter((i) => i[0] === '---' || i[2]);
   const menu = MR.el('<div class="menu">' + items.map((i) => (i[0] === '---' ? '<hr>' : `<button type="button" data-a="${i[0]}">${i[1]}</button>`)).join('') + '</div>');
   document.body.appendChild(menu);
@@ -545,8 +545,15 @@ MR.libAction = async function (id, action) {
       const v = await MR.ask1('Rename library', 'Name', lib.name);
       if (v) { await MR.api(base, { method: 'PATCH', body: { name: v } }); await MR.refreshLibs(); }
     } else if (action === 'delete') {
-      if (await MR.confirm('Delete library', `Delete "${lib.name}" and everything downloaded for it? This cannot be undone.`)) {
-        await MR.api(base, { method: 'DELETE' }); MR.S.selected.delete(id); await MR.refreshLibs();
+      const busy = MR.S.busy.has(id);       // still downloading or indexing: that is stopped first
+      const text = busy
+        ? `"${lib.name}" is still being downloaded or indexed. Stop that and delete the library, with everything downloaded for it? This cannot be undone.`
+        : `Delete "${lib.name}" and everything downloaded for it? This cannot be undone.`;
+      if (await MR.confirm('Delete library', text, 'Delete')) {
+        await MR.api(base + (busy ? '?stop_jobs=true' : ''), { method: 'DELETE' });
+        MR.S.selected.delete(id);
+        await MR.refreshLibs(); await MR.pollJobs();
+        MR.toast('Deleted ' + lib.name + '.', 'ok');
       }
     } else if (action === 'embedder') {
       const opts = MR.S.embedders.map((o) => `<option value="${o.id}" ${o.available ? '' : 'disabled'}>${MR.esc(o.name)}${o.available ? '' : ' (needs a key)'}</option>`).join('');

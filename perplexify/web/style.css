@@ -336,6 +336,10 @@ input.input, select.input { height: 36px; }
 .lib .only { border: 0; background: transparent; color: var(--faint); font-size: 11.5px; padding: 0 5px; visibility: hidden; }
 .lib:hover .only, .lib:focus-within .only { visibility: visible; }
 .lib .only:hover { color: var(--accent); text-decoration: underline; }
+.lib .trash { display: flex; align-items: center; border: 0; background: transparent; color: var(--faint); padding: 0 3px; visibility: hidden; }
+.lib .trash svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.lib:hover .trash, .lib:focus-within .trash { visibility: visible; }
+.lib .trash:hover { color: var(--err); }
 .lib .menu-btn { border: 0; background: transparent; color: var(--faint); padding: 0 4px; font-size: 15px; line-height: 1; }
 .lib .menu-btn:hover { color: var(--text); }
 .side-empty { padding: 14px 16px; color: var(--muted); font-size: 13px; }

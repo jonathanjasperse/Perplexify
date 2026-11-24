@@ -227,6 +227,38 @@ class ServerAPI(TempHome):
         self.wait(job.to_dict())
         self.assertEqual(self.client.delete(f"/api/libraries/{lib['id']}").status_code, 200)
 
+    def test_09_a_busy_library_can_be_deleted_by_stopping_its_jobs(self):
+        import threading
+
+        running = self.client.post("/api/libraries", json={"name": "Running now"}).json()
+        waiting = self.client.post("/api/libraries", json={"name": "Waiting behind it"}).json()
+        gate, never = threading.Event(), threading.Event()
+
+        def cooperative(job):                       # like a real crawl: only the Stop flag ends it
+            while not never.is_set():
+                job.check()
+                time.sleep(0.02)
+
+        blocker = self.ctx.jobs.submit("x", "other library", waiting["id"] + "-other", lambda j: gate.wait(10))
+        job_a = self.ctx.jobs.submit("x", "running", running["id"], cooperative)
+        job_b = self.ctx.jobs.submit("x", "queued", waiting["id"], cooperative)
+        time.sleep(0.2)
+        # without the flag it is still refused
+        self.assertEqual(self.client.delete(f"/api/libraries/{running['id']}").status_code, 409)
+        # a queued job (the worker is busy elsewhere) is cancelled on the spot and its library goes at once
+        self.assertEqual(self.client.delete(f"/api/libraries/{waiting['id']}?stop_jobs=true").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/libraries/{waiting['id']}").status_code, 404)
+        self.assertEqual(job_b.to_dict()["status"], "cancelled")
+        gate.set()
+        self.wait(blocker.to_dict())
+        time.sleep(0.3)
+        self.assertEqual(job_a.to_dict()["status"], "running")
+        # a running job is stopped, then its library is deleted
+        self.assertEqual(self.client.delete(f"/api/libraries/{running['id']}?stop_jobs=true").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/libraries/{running['id']}").status_code, 404)
+        self.assertEqual(job_a.to_dict()["status"], "cancelled")
+        self.assertEqual(self.client.delete("/api/libraries/does-not-exist?stop_jobs=true").status_code, 404)
+
 
 class NoModel(TempHome):
     def test_chat_without_a_connected_model_says_what_to_do(self):

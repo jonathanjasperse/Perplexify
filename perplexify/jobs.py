@@ -103,6 +103,23 @@ class JobManager:
         job._cancel.set()
         return True
 
+    def cancel_library(self, library_id: str, timeout: float = 30.0) -> bool:
+        """Stop every queued or running job of a library and wait until none is left. True when the library is idle.
+        A queued job is cancelled on the spot (the worker may be busy with another library for a long time); a running
+        one stops at its next check, normally within a second or two."""
+        with self._lock:
+            for j in self._jobs.values():
+                if j.library_id == library_id and j.status in ("queued", "running"):
+                    j._cancel.set()
+                    if j.status == "queued":
+                        j.status, j.finished, j.message = "cancelled", time.time(), "Stopped."
+        deadline = time.time() + timeout
+        while library_id in self.active_libraries():
+            if time.time() > deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
     def active_libraries(self) -> set[str]:
         with self._lock:
             return {j.library_id for j in self._jobs.values()
@@ -111,10 +128,11 @@ class JobManager:
     def _worker(self) -> None:
         while True:
             job, fn = self._queue.get()
-            if job.cancelled:
-                job.status, job.finished = "cancelled", time.time()
-                continue
-            job.status, job.started = "running", time.time()
+            with self._lock:          # one step with cancel_library(): a job is either cancelled before it starts or runs
+                if job.cancelled:
+                    job.status, job.finished = "cancelled", job.finished or time.time()
+                    continue
+                job.status, job.started = "running", time.time()
             try:
                 fn(job)
                 job.status = "done"

@@ -136,6 +136,7 @@ MR.renderSide = function () {
       <label class="check"><input type="checkbox" ${S.selected.has(l.id) ? 'checked' : ''} aria-label="Search ${MR.esc(l.name)}"></label>
       <div class="name" title="${MR.esc(l.name)}. Click to focus it: new sources are added here">${MR.esc(l.name)}</div>
       <div class="tools"><button class="only" type="button" title="Search only this library">only</button>
+        <button class="trash" type="button" title="Delete this library" aria-label="Delete ${MR.esc(l.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
         <button class="menu-btn" type="button" aria-label="Actions for ${MR.esc(l.name)}">&middot;&middot;&middot;</button></div>
       <div class="meta">
         ${code ? '<span class="tag code">code</span>' : ''}${docs ? '<span class="tag">docs</span>' : ''}
@@ -144,54 +145,93 @@ MR.renderSide = function () {
       </div>${state}
     </div>`;
   }).join('');
-  const jobs = S.jobs.filter((j) => !S.dismissed.has(j.id)).slice(0, 5).map((j) => {
+  /* A job's bar and figures change every second while it works; its title and buttons do not. `live` false leaves the
+     changing parts blank, which gives the "shape" of the list: only when that changes is the list rebuilt, otherwise the bars
+     and figures are updated in place (a button rebuilt under the mouse would swallow the click). */
+  const shown = S.jobs.filter((j) => !S.dismissed.has(j.id)).slice(0, 5);
+  const figures = (j) => (j.phase || 'working') + (j.total ? ` ${MR.fmt.n(j.current)}/${MR.fmt.n(j.total)}` : '') + ' ' + (j.error || j.message || '');
+  const jobHtml = (j, live) => {
     const run = j.status === 'queued' || j.status === 'running';
-    const pct = j.total ? Math.min(100, (100 * j.current) / j.total) : 0;
+    const pct = live && j.total ? Math.min(100, (100 * j.current) / j.total) : 0;
     const color = j.status === 'error' ? 'err' : j.status === 'done' ? 'ok' : j.status === 'cancelled' ? 'faint' : '';
+    const msg = run ? (live ? MR.esc(figures(j)) : '') : MR.esc(j.status + ': ' + (j.error || j.message || ''));
     return `<div class="job" data-job="${j.id}">
       <div class="j-title"><span title="${MR.esc(j.title)}">${MR.esc(j.title)}</span>
         ${run ? `<a href="#" data-cancel="${j.id}">stop</a>` : `<a href="#" data-dismiss="${j.id}">dismiss</a>`}</div>
       ${run ? `<div class="bar ${j.total ? '' : 'indeterminate'}"><i style="width:${pct}%"></i></div>` : ''}
-      <div class="j-msg ${color}">${run ? MR.esc((j.phase || 'working') + (j.total ? ` ${MR.fmt.n(j.current)}/${MR.fmt.n(j.total)}` : '')) + ' ' : j.status + ': '}${MR.esc(j.error || j.message || '')}</div>
+      <div class="j-msg ${color}">${msg}</div>
     </div>`;
-  }).join('');
+  };
   const focused = S.libs.find((l) => l.id === S.focus);
   // With a library focused (its name clicked) there are two buttons: add to that library, and add as a new library.
   const addButtons = focused
     ? `<button class="btn primary" id="btn-add" type="button" title="Add a website, repository or documents to ${MR.esc(focused.name)}"><span class="ell">+ Add to ${MR.esc(focused.name)}</span></button>
        <button class="btn" id="btn-add-new" type="button" title="Add a website, repository or documents as a new library">+ Add New</button>`
     : '<button class="btn primary" id="btn-add" type="button" title="Add a website, repository or documents">+ Add source</button>';
-  side.innerHTML = `
-    <div class="side-head"><span class="label">Libraries <span class="faint">${sel}/${S.libs.length}</span></span>
-      ${S.libs.length > 1 ? '<span class="links"><a href="#" data-sel="all">all</a><a href="#" data-sel="none">none</a></span>' : ''}</div>
-    <div class="libs">${items || '<div class="side-empty">Nothing here yet. Add a manual, a documentation website or a code repository.</div>'}</div>
-    ${jobs ? `<div class="jobs">${jobs}</div>` : ''}
-    <div class="side-foot">${addButtons}</div>`;
-  MR.$('#btn-add').addEventListener('click', () => MR.openAdd('web', S.focus));
-  const addNew = MR.$('#btn-add-new');
-  if (addNew) addNew.addEventListener('click', () => MR.openAdd('web', null));
-  MR.$$('[data-sel]', side).forEach((a) => a.addEventListener('click', (e) => {
-    e.preventDefault();
-    S.selected = a.dataset.sel === 'all' ? new Set(S.libs.map((l) => l.id)) : new Set();
-    MR.selectionChanged();
-  }));
-  MR.$$('.lib', side).forEach((row) => {
-    const id = row.dataset.id;
-    MR.$('input', row).addEventListener('change', (e) => {
-      e.target.checked ? S.selected.add(id) : S.selected.delete(id);
+
+  /* The sidebar is a head, the list, the jobs and a foot. Each is redrawn only when its own content changed (this runs every
+     second while a job works) and keeps where it was scrolled to; the rest stays as it is, so hovering and clicking are not
+     interrupted and nothing jumps. */
+  if (!side.querySelector(':scope > .side-head')) side.innerHTML = '<div class="side-head"></div><div class="libs"></div><div class="jobs" hidden></div><div class="side-foot"></div>';
+  const part = (cls, html, wire) => {
+    const el = side.querySelector(':scope > .' + cls);
+    if (el._html === html) return;
+    const top = el.scrollTop;
+    el.innerHTML = html; el._html = html;
+    if (top) el.scrollTop = top;
+    if (wire) wire(el);
+  };
+  part('side-head', `<span class="label">Libraries <span class="faint">${sel}/${S.libs.length}</span></span>
+      ${S.libs.length > 1 ? '<span class="links"><a href="#" data-sel="all">all</a><a href="#" data-sel="none">none</a></span>' : ''}`, (el) => {
+    MR.$$('[data-sel]', el).forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault();
+      S.selected = a.dataset.sel === 'all' ? new Set(S.libs.map((l) => l.id)) : new Set();
       MR.selectionChanged();
-    });
-    MR.$('.name', row).addEventListener('click', () => {
-      S.focus = S.focus === id ? null : id;
-      MR.store.set('focus', S.focus);
-      MR.renderSide();
-    });
-    MR.$('.only', row).addEventListener('click', () => { S.selected = new Set([id]); MR.selectionChanged(); });
-    MR.$('.menu-btn', row).addEventListener('click', (e) => MR.libMenu(id, e.currentTarget));
+    }));
   });
-  MR.$$('[data-resume]', side).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); MR.libAction(a.dataset.resume, 'resume'); }));
-  MR.$$('[data-cancel]', side).forEach((a) => a.addEventListener('click', async (e) => { e.preventDefault(); await MR.api('/api/jobs/' + a.dataset.cancel + '/cancel', { method: 'POST' }); MR.pollJobs(); }));
-  MR.$$('[data-dismiss]', side).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); S.dismissed.add(a.dataset.dismiss); MR.renderSide(); }));
+  part('libs', items || '<div class="side-empty">Nothing here yet. Add a manual, a documentation website or a code repository.</div>', (el) => {
+    MR.$$('.lib', el).forEach((row) => {
+      const id = row.dataset.id;
+      MR.$('input', row).addEventListener('change', (e) => {
+        e.target.checked ? S.selected.add(id) : S.selected.delete(id);
+        MR.selectionChanged();
+      });
+      MR.$('.name', row).addEventListener('click', () => {
+        S.focus = S.focus === id ? null : id;
+        MR.store.set('focus', S.focus);
+        MR.renderSide();
+      });
+      MR.$('.only', row).addEventListener('click', () => { S.selected = new Set([id]); MR.selectionChanged(); });
+      MR.$('.trash', row).addEventListener('click', (e) => { e.stopPropagation(); MR.libAction(id, 'delete'); });
+      MR.$('.menu-btn', row).addEventListener('click', (e) => MR.libMenu(id, e.currentTarget));
+    });
+    MR.$$('[data-resume]', el).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); MR.libAction(a.dataset.resume, 'resume'); }));
+  });
+  const jobsEl = side.querySelector(':scope > .jobs');
+  const shape = shown.map((j) => jobHtml(j, false)).join('');
+  if (jobsEl._shape === shape) {
+    shown.forEach((j) => {                                           // same jobs, same buttons: only the figures moved
+      if (j.status !== 'queued' && j.status !== 'running') return;
+      const row = jobsEl.querySelector(`[data-job="${j.id}"]`);
+      if (!row) return;
+      const bar = row.querySelector('.bar > i'), msg = row.querySelector('.j-msg');
+      if (bar) bar.style.width = (j.total ? Math.min(100, (100 * j.current) / j.total) : 0) + '%';
+      if (msg) msg.textContent = figures(j);
+    });
+  } else {
+    const top = jobsEl.scrollTop;
+    jobsEl.innerHTML = shown.map((j) => jobHtml(j, true)).join('');
+    jobsEl._shape = shape;
+    jobsEl.hidden = !shown.length;
+    if (top) jobsEl.scrollTop = top;
+    MR.$$('[data-cancel]', jobsEl).forEach((a) => a.addEventListener('click', async (e) => { e.preventDefault(); await MR.api('/api/jobs/' + a.dataset.cancel + '/cancel', { method: 'POST' }); MR.pollJobs(); }));
+    MR.$$('[data-dismiss]', jobsEl).forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); S.dismissed.add(a.dataset.dismiss); MR.renderSide(); }));
+  }
+  part('side-foot', addButtons, (el) => {
+    MR.$('#btn-add', el).addEventListener('click', () => MR.openAdd('web', S.focus));
+    const addNew = MR.$('#btn-add-new', el);
+    if (addNew) addNew.addEventListener('click', () => MR.openAdd('web', null));
+  });
 };
 
 /* Which libraries are ticked. A library this browser has not seen before starts ticked, so a manual added from the command line

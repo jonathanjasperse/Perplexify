@@ -409,8 +409,12 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
         return lib.summary()
 
     @app.delete("/api/libraries/{lib_id}")
-    def delete_library(lib_id: str):
+    def delete_library(lib_id: str, stop_jobs: bool = False):
+        """Delete a library. While it is busy that is refused, unless `stop_jobs` says the running jobs may be stopped first."""
         lib_or_404(lib_id)
+        if stop_jobs and lib_id in ctx.jobs.active_libraries():
+            if not ctx.jobs.cancel_library(lib_id):
+                raise HTTPException(409, "The running job is taking a while to stop. Try again in a moment.")
         idle_or_409(lib_id)
         ctx.libs.delete(lib_id)
         return {"ok": True}
