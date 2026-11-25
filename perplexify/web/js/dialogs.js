@@ -421,8 +421,12 @@ MR.openSettings = function (tab = 'models') {
       ${chk('rerank', 'Rerank with a cross-encoder', 'More accurate ordering; the small model it needs ships with Perplexify.')}
       <div class="row" style="margin-bottom:18px"><button class="btn primary" id="st-save" type="button">Save</button><span class="hint" id="st-msg"></span></div>
       <div class="group"><h3>Web research (the Research switch beside the question box)</h3>
-        <p class="hint" style="margin:0 0 10px">The connected model decides what to search for; Perplexify runs the searches, reads the best pages and hands them to the model to cite.
-          A search service key makes this dependable. Without one, DuckDuckGo is tried, which often refuses automated searches.</p>
+        <p class="hint" style="margin:0 0 10px">The connected model decides what to search for; Perplexify runs the searches, reads the best results and hands them to the model to cite.
+          <b>It works as it is: no key and no account.</b> It asks open sources that let programs search them, at the pace each one asks for.
+          Untick any source you do not want your searches sent to.</p>
+        <div class="opts two">${(S.settings.web_source_info || []).map((w) => `<div class="field"><label class="check"><input type="checkbox" data-ws="${MR.esc(w.id)}" ${(S.settings.web_sources || {})[w.id] === false ? '' : 'checked'}> ${MR.esc(w.name)}</label>
+          <div class="hint">${MR.esc(w.about)}</div></div>`).join('')}</div>
+        <p class="hint" style="margin:2px 0 12px">Optional: a Tavily or Brave Search key adds ordinary web search with wider coverage. A saved key is used first; the sources above step in if that service fails.</p>
         ${[['tavily', 'Tavily', 'tvly-...', 'https://app.tavily.com/home', 'built for AI research, 1,000 free searches a month'],
            ['brave', 'Brave Search', 'BSA...', 'https://api-dashboard.search.brave.com/app/keys', 'independent index, free tier']].map(([id, name, ph, url, note]) => {
           const saved = S.settings.embedding_keys && S.settings.embedding_keys[id];
@@ -443,9 +447,18 @@ MR.openSettings = function (tab = 'models') {
       wkey(b.dataset.wsave, v);
     }));
     MR.$$('[data-wdel]', m.$('#st-pane')).forEach((b) => b.addEventListener('click', () => wkey(b.dataset.wdel, '')));
+    MR.$$('[data-ws]', m.$('#st-pane')).forEach((box) => box.addEventListener('change', async () => {
+      try { S.settings = await MR.api('/api/settings', { method: 'PUT', body: { web_sources: { [box.dataset.ws]: box.checked } } }); wsay('Saved.', 'ok'); }
+      catch (x) { box.checked = !box.checked; wsay(x.message, 'err'); }
+    }));
     m.$('#st-wtest').addEventListener('click', async () => {
       wsay('Searching...', 'muted');
-      try { const r = await MR.api('/api/search-keys/test', { method: 'POST' }); wsay(`Works: ${r.results} ${r.results === 1 ? 'result' : 'results'} from ${r.engine}.`, 'ok'); }
+      try {
+        const r = await MR.api('/api/search-keys/test', { method: 'POST' });
+        const from = Object.entries(r.sources || {}).map(([n, c]) => `${n} (${c})`).join(', ');
+        const away = Object.entries(r.unavailable || {}).map(([n, why]) => `${n} ${why}`).join('; ');
+        wsay(`Works: ${r.results} ${r.results === 1 ? 'result' : 'results'} from ${from || r.engine}.` + (away ? ` Not available right now: ${away}.` : ''), 'ok');
+      }
       catch (x) { wsay(x.message, 'err'); }
     });
     m.$('#st-save').addEventListener('click', async () => {
@@ -484,7 +497,8 @@ MR.openSettings = function (tab = 'models') {
         your question, the few most relevant excerpts (documentation or source code), and the recent conversation. Nothing else is uploaded.
         With a local model (llama.cpp) even those stay here: the model runs on this computer and nothing is sent anywhere.</p>
         <p style="margin:0 0 8px">Your chat history, saved searches and bookmarks are stored only in this computer's data folder. They are never sent to a provider; you can clear history in the History tab.</p>
-        <p style="margin:0">With a cloud embedding model selected for a library, its passages are also sent to that embedding provider while it is indexed. The built-in model sends nothing.</p></div>
+        <p style="margin:0 0 8px">With a cloud embedding model selected for a library, its passages are also sent to that embedding provider while it is indexed. The built-in model sends nothing.</p>
+        <p style="margin:0">Only when you switch Research on: the web searches the model writes from your question (not your documents) are sent to the open sources ticked in Settings &gt; Search (Wikipedia, PubMed, arXiv, OpenAlex, Stack Overflow, GitHub, DuckDuckGo), or to Tavily or Brave Search if you saved a key. The pages those searches find are downloaded from their own websites.</p></div>
       <div class="group"><h3>Keys</h3><p style="margin:0">API keys are encrypted with ${S.platform === 'windows' ? 'Windows data protection (bound to your Windows account)' : S.platform === 'mac' ? 'the macOS Keychain' : 'a local file readable only by you'} and are never shown again in this window.</p></div>
       <div class="group"><h3>This app</h3><div class="row wrap">
         <button class="btn" id="st-data" type="button">Open data folder</button>

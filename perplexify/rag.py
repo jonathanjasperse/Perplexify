@@ -35,6 +35,9 @@ You are given numbered excerpts of source code and documentation retrieved from 
 # scientists and biomedical engineers: the excerpts are the evidence, their own knowledge is allowed to build on it, and the
 # answer keeps the two apart. The other models (Gemini, DeepSeek, local and custom ones) keep the strict prompts above.
 EXPERT_PROVIDERS = ("anthropic", "openai")
+# Research answers read real paper abstracts, answers and projects from the open sources (see opensources.py), which asks for the
+# same kind of judgement: the three providers with the strongest models get a research prompt written for that.
+EXPERT_RESEARCH_PROVIDERS = ("anthropic", "openai", "gemini")
 
 _EXPERT_COMMON = """
 
@@ -53,6 +56,19 @@ You are given numbered excerpts retrieved from them.""" + _EXPERT_COMMON
 SYSTEM_PROMPT_EXPERT_CODE = """You are a senior research and engineering partner for data scientists and biomedical engineers working with these repositories and documents: {manuals}.
 
 You are given numbered excerpts of source code and documentation retrieved from them. When you point at code, give its file path and line range as shown in the excerpt header, for example `src/Foo.cpp:120-148`, and quote code exactly as written. Do not invent functions, parameters or behaviour that the code is claimed to have; suggestions for how it could be improved or extended are welcome, but present them as suggestions.""" + _EXPERT_COMMON
+
+SYSTEM_PROMPT_RESEARCH_EXPERT = """You are a senior research partner for data scientists and biomedical engineers. Today is {today}.
+
+You are given numbered excerpts: material found on the web for this question{and_libraries}. The web material can be paper abstracts (PubMed, arXiv, OpenAlex), encyclopedia and other web pages, Stack Overflow questions with their best answers, and GitHub projects; each excerpt says where it came from. A paper abstract is a summary of the paper, not its full text.
+
+How to answer:
+1. The excerpts are your evidence. Cite them inline with bracketed numbers like [1] or [2][4], right after the statement they support, and cite the most direct source. Every specific finding, number, date, name, parameter or quote must come from an excerpt and be cited. Copy figures exactly. Never invent a citation, author, year or result.
+2. Synthesise, do not just list. Say what the sources agree on, where they disagree and why (data, population, method, date), and what is missing. When the excerpts are thin, off topic or answer only part of the question, say so plainly.
+3. Judge the evidence like a reviewer: the kind of source (peer-reviewed paper, preprint, review, encyclopedia page, forum answer, repository), the study design, sample size, population and data set, how the result was validated (held-out or external data, patient-wise versus record-wise splits, cross-validation), which metrics were used and what they hide, and how recent it is. An abstract cannot support claims about details it does not mention. A popular repository or a highly voted answer is not proof that it is correct or maintained; look at its age and the versions it refers to.
+4. You are expected to add your own expertise. Use your general scientific and engineering knowledge to explain concepts, connect the findings to established methods, fill gaps with sound reasoning, and say what follows from them. Mark that content plainly ("From general knowledge:", "Inference:") and never attribute it to an excerpt.
+5. Turn the findings into engineering guidance when it helps: a sensible approach and baseline, design choices and trade-offs, how to validate it, the likely failure modes (data leakage, class imbalance, label noise, distribution shift, calibration), what to measure first, and what to read or try next, including better search terms when the excerpts miss the target.
+6. For clinical, regulatory or safety-related questions (medical devices, diagnostics, patient data), give the technical substance, name relevant standards and regulations from your knowledge as general knowledge (for example IEC 62304, ISO 14971, ISO 13485, FDA and EU MDR pathways, HIPAA, GDPR), flag what needs expert or regulatory review, and do not present your reasoning as medical advice.
+7. Write for experts: precise terminology and a direct answer first, then the evidence, the engineering guidance and the caveats. Use headings, lists or tables only when they make it clearer. Put code and formulas in fenced blocks."""
 
 SYSTEM_PROMPT_RESEARCH = """You are a careful research assistant. Today is {today}.
 
@@ -276,8 +292,10 @@ class RagEngine:
                 info = provider.info()                     # the window the engine really has (it was asked for the one in Settings)
                 window = int(info.get("context_window") or window)
             excerpt_budget = min(int(retr["max_excerpt_tokens"]), int(window * (0.5 if local else 0.55)))
-            expert = getattr(provider, "provider_id", "") in EXPERT_PROVIDERS and not local
-            prompt = self._prompt(question, history, hits, window, excerpt_budget, local, research, expert)
+            provider_id = getattr(provider, "provider_id", "")
+            expert = provider_id in EXPERT_PROVIDERS and not local                      # a model on this computer always gets the strict prompts
+            expert_research = provider_id in EXPERT_RESEARCH_PROVIDERS and not local
+            prompt = self._prompt(question, history, hits, window, excerpt_budget, local, research, expert, expert_research)
             if local:
                 prompt = self._fit_local(provider, question, history, hits, window, excerpt_budget, prompt, research)
             used = prompt["used"]
@@ -329,7 +347,7 @@ class RagEngine:
     # ------------------------------------------------------------------ the prompt, and the local model that has to hold it
     @staticmethod
     def _prompt(question: str, history: list[dict], hits: list[Hit], window: int, budget: int, local: bool,
-                research: bool = False, expert: bool = False) -> dict:
+                research: bool = False, expert: bool = False, expert_research: bool = False) -> dict:
         """System text, messages and the passages that fit into `budget` tokens of excerpts. A local model gets a little less
         of the window for excerpts and conversation: its tokenizer is unknown here, and the answer needs room too."""
         excerpts, used = build_excerpts(hits, budget)
@@ -337,8 +355,9 @@ class RagEngine:
             return {"used": [], "budget": budget}
         if research and any(h.kind == "web" for h in used):
             libs = ", ".join(dict.fromkeys(h.library_name for h in used if h.kind != "web"))
-            system = SYSTEM_PROMPT_RESEARCH.format(today=time.strftime("%A %d %B %Y"),
-                                                   and_libraries=f", and passages from the user's own libraries ({libs})" if libs else "")
+            template = SYSTEM_PROMPT_RESEARCH_EXPERT if expert_research else SYSTEM_PROMPT_RESEARCH
+            system = template.format(today=time.strftime("%A %d %B %Y"),
+                                     and_libraries=f", and passages from the user's own libraries ({libs})" if libs else "")
         else:
             names = ", ".join(dict.fromkeys(h.library_name for h in used))
             code_share = sum(h.kind == "code" for h in used) / len(used)

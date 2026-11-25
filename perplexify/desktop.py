@@ -218,6 +218,7 @@ def _user32():
         u.GetWindowThreadProcessId.argtypes, u.GetWindowThreadProcessId.restype = [void, void], c_uint
         u.AttachThreadInput.argtypes, u.AttachThreadInput.restype = [c_uint, c_uint, c_int], c_int
         u.GetSystemMetrics.argtypes, u.GetSystemMetrics.restype = [c_int], c_int
+        u.SetWindowPos.argtypes, u.SetWindowPos.restype = [void, void, c_int, c_int, c_int, c_int, c_uint], c_int
         u.SystemParametersInfoW.argtypes, u.SystemParametersInfoW.restype = [c_uint, c_uint, void, c_uint], c_int
         _user32_cache = u
     return _user32_cache
@@ -239,6 +240,10 @@ def set_app_user_model_id() -> None:
         log.debug("SetCurrentProcessExplicitAppUserModelID failed", exc_info=True)
 
 
+class _MARGINS(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_int), ("right", ctypes.c_int), ("top", ctypes.c_int), ("bottom", ctypes.c_int)]
+
+
 def style_titlebar(hwnd: int, theme: str) -> None:
     """Colour the Windows title bar like the page (dark mode on Windows 10 2004+, exact colours on Windows 11)."""
     if not IS_WINDOWS or not hwnd:
@@ -256,6 +261,14 @@ def style_titlebar(hwnd: int, theme: str) -> None:
         attribute(35, _colorref(colors["bg"]))        # DWMWA_CAPTION_COLOR (Windows 11)
         attribute(36, _colorref(colors["fg"]))        # DWMWA_TEXT_COLOR
         attribute(34, _colorref(colors["border"]))    # DWMWA_BORDER_COLOR
+        # Windows 10 draws a translucent one-pixel border around a dark title bar, and on a maximized window that pixel column
+        # sits on the screen edge and shows the desktop through (a purple line at the top left and right). Extending the frame
+        # into the window makes the title bar's own colour run to the very edge.
+        margins = _MARGINS(*(-1,) * 4) if theme == "dark" else _MARGINS(0, 0, 0, 0)       # light mode never had the line: leave it as it was
+        dwm.DwmExtendFrameIntoClientArea.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+        # Windows does not repaint the title bar when these change (it waited for the window to be resized): ask for it now.
+        _user32().SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x4037)   # NOSIZE | NOMOVE | NOZORDER | NOACTIVATE | FRAMECHANGED | ASYNCWINDOWPOS (never waits for the window)
     except Exception:  # noqa: BLE001
         log.debug("could not style the title bar", exc_info=True)
 

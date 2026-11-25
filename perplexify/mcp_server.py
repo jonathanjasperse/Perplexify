@@ -32,7 +32,8 @@ TOOLS = [
          "start_line": {"type": "integer", "default": 1}, "end_line": {"type": "integer"}}}},
     {"name": "web_search",
      "description": "Search the web and read the best pages. Returns numbered excerpts with each page's title and URL, "
-                    "for citing. Uses Tavily or Brave Search when a key is saved in Perplexify, else DuckDuckGo.",
+                    "for citing. Needs no key: it searches Wikipedia, PubMed, arXiv, OpenAlex, Stack Overflow, GitHub and DuckDuckGo "
+                    "(Tavily or Brave Search instead when a key is saved in Perplexify).",
      "inputSchema": {"type": "object", "required": ["query"], "properties": {
          "query": {"type": "string", "description": "What to search for, as you would type it into a search engine"},
          "max_pages": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}}}},

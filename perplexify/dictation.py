@@ -40,11 +40,12 @@ class DictationError(RuntimeError):
 
 def available() -> bool:
     """True when the speech engine (the faster-whisper package) is installed."""
-    try:
-        import faster_whisper  # noqa: F401
-    except Exception:  # noqa: BLE001 - a missing or broken package just switches the feature off
+    import importlib.util
+
+    try:                                          # looked up, not imported: importing loads the whole engine (slow, and memory)
+        return importlib.util.find_spec("faster_whisper") is not None and importlib.util.find_spec("ctranslate2") is not None
+    except (ImportError, ValueError):             # a broken installation just switches the feature off
         return False
-    return True
 
 
 def model_dir() -> Path:

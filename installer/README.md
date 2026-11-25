@@ -168,6 +168,15 @@ tests (informational until they have been seen passing on a Mac), download the m
 `Contents/Resources`, sign, run the app's own `selftest` plus a web-server and engine check **on the finished bundle**,
 make the DMG, optionally notarize it, upload it.
 
+Two things protect Macs that are not like the build machine:
+
+- **Oldest macOS.** `installer/macos/min_macos.py` reads the minimum macOS version recorded in every compiled file in the
+  app (Python, numpy, ONNX Runtime, CTranslate2, llama.cpp...) and writes the newest one into `Info.plist` before signing, so a
+  Mac that is too old is told "requires macOS X" instead of crashing. The log of that step shows the number and which file sets it.
+- **Microphone (dictation).** `Info.plist` carries the usage text macOS shows the first time the microphone button is pressed, and
+  `entitlements.plist` declares the microphone for the hardened runtime. The speech model (145 MB) is downloaded into the app with
+  the other models, and the smoke test sends a second of silence through the real speech engine.
+
 Signing is optional. Add these repository secrets (Settings > Secrets and variables > Actions) and the next run signs
 with your Apple Developer ID and notarizes, so the app opens without a warning:
 

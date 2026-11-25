@@ -53,5 +53,8 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
         "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},   # the window shows http://127.0.0.1:<port>, served by the app itself
         "NSHumanReadableCopyright": "Perplexify",
+        # asked once, the first time the microphone button is pressed; without this text macOS stops the app instead of asking
+        "NSMicrophoneUsageDescription": "Perplexify listens only while you press the microphone button, to turn your speech into text. "
+                                         "The recognition runs on this Mac and the audio is never sent anywhere.",
     },
 )

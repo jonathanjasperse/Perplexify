@@ -68,15 +68,15 @@ jobs:
         continue-on-error: true
         run: python -X utf8 -m unittest discover -s tests
 
-      - name: Built-in models (embedding and reranking), cached between runs
+      - name: Built-in models (embedding, reranking and speech), cached between runs
         uses: actions/cache@v4
         id: models-cache
         with:
           path: build/models
-          key: models-${{ steps.info.outputs.embedding }}-${{ steps.info.outputs.reranker }}
+          key: models-${{ steps.info.outputs.embedding }}-${{ steps.info.outputs.reranker }}-whisper-base
       - name: Download the models
         if: steps.models-cache.outputs.cache-hit != 'true'
-        run: python -m perplexify download-model --dest build/models --model "${{ steps.info.outputs.embedding }}" --reranker "${{ steps.info.outputs.reranker }}"
+        run: python -m perplexify download-model --dest build/models --model "${{ steps.info.outputs.embedding }}" --reranker "${{ steps.info.outputs.reranker }}" --whisper
 
       - name: llama.cpp engine for local models (pinned, SHA-256 checked)
         run: python installer/macos/fetch_llama.py "$ARCH" build/llama build/llama-cache
@@ -95,6 +95,11 @@ jobs:
           ditto build/llama "$RES/llama"       # ditto keeps the library symlinks (libllama.dylib -> libllama.1.dylib)
           cp LICENSE "$RES/LICENSE-Perplexify.txt" 2>/dev/null || true
           du -sh dist/Perplexify.app "$RES/models" "$RES/llama"
+
+      # A compiled file inside the bundle that needs a newer macOS than Info.plist admits would crash on an older Mac without a
+      # message. This finds the newest requirement among all of them and writes it into Info.plist (before the app is signed).
+      - name: Declare the oldest macOS the app really supports
+        run: python installer/macos/min_macos.py dist/Perplexify.app
 
       - name: Check which signing secrets exist
         id: sign
@@ -159,6 +164,9 @@ jobs:
           curl -fsS http://127.0.0.1:8791/api/health
           curl -fsS http://127.0.0.1:8791/api/bootstrap | python -c "import json,sys; b=json.load(sys.stdin); assert b['platform']=='mac', b['platform']; print('providers:', len(b['providers']))"
           curl -fsS http://127.0.0.1:8791/ | grep -q Perplexify
+          curl -fsS http://127.0.0.1:8791/api/dictation | python -c "import json,sys; d=json.load(sys.stdin); assert d['available'] and d['model_ready'], d; print('dictation:', d)"
+          # one second of silence through the real speech engine: proves CTranslate2 and the bundled model load on this Mac
+          head -c 64000 /dev/zero | curl -fsS -X POST --data-binary @- http://127.0.0.1:8791/api/dictation/transcribe | python -c "import json,sys; print('speech engine ran:', json.load(sys.stdin))"
           curl -fsS http://127.0.0.1:8791/api/local/status | python -c "import json,sys; e=json.load(sys.stdin)['engine']; assert e['found'] and e['source']=='installed', e; print('engine:', e.get('version'), e.get('gpu_backends'))"
           kill "$PID"
 

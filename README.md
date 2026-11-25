@@ -15,6 +15,10 @@ tab works with no model at all.
 - Chats and searches are saved in the History tab (can be turned off or cleared). Bookmarks live in nested folders and
   are not cleared with history.
 - Retrieval defaults (30 passages, rewriting, reranking, and so on) can be changed in Settings > Search.
+- **Research** (the switch beside the question box) lets the model search the web as well, with no key and no setup. It asks
+  Wikipedia, PubMed, arXiv, OpenAlex, Stack Overflow, GitHub and DuckDuckGo at the pace each allows, keeps what is on topic and
+  cites it (paper abstracts and accepted answers come with their text). Each source can be switched off in Settings > Search; a
+  free Tavily or Brave Search key is optional and adds ordinary web results.
 
 ## Install
 

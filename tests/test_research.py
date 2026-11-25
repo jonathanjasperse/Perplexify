@@ -83,6 +83,20 @@ class Research(TempHome):
         self.assertIn("[1] Page 1 (https://blog.rust-lang.org/2024/07/25/Rust-1.80.0.html)", messages[-1]["content"])
         self.assertIn("[1]", "".join(e["text"] for e in evs if e["type"] == "token"))
 
+    def test_each_provider_gets_the_research_prompt_meant_for_it(self):
+        for provider_id, expected in (("anthropic", "senior research partner"), ("openai", "senior research partner"),
+                                      ("gemini", "senior research partner"), ("deepseek", "careful research assistant"),
+                                      ("custom", "careful research assistant")):
+            class Named(FakeProvider):
+                pass
+            Named.provider_id = provider_id
+            self.provider = Named()
+            evs = self.ask()
+            self.assertNotIn("error", [e["type"] for e in evs], (provider_id, evs))
+            system = self.provider.streams[0][0]
+            self.assertIn(expected, system, provider_id)
+            self.assertIn("Rust 1.80", "".join(e["text"] for e in evs if e["type"] == "token"))
+
     def test_research_with_libraries_mixes_web_pages_and_passages(self):
         evs = self.ask(libraries=["lib"])
         self.assertEqual(self.lib_calls, [["lib"]])
@@ -117,7 +131,138 @@ class Research(TempHome):
         self.assertTrue(client.get("/api/settings").json()["embedding_keys"]["tavily"])
         self.assertNotIn("tvly-test", client.get("/api/settings").text, "the key itself never reaches the page")
         client.post("/api/search-keys", json={"provider": "tavily", "key": ""})
-        self.assertEqual(websearch.engine_name(self.ctx.settings), "duckduckgo")
+        self.assertEqual(websearch.engine_name(self.ctx.settings), "open")           # no key: the open sources
+
+
+def open_found(per_query, used=("Wikipedia",), errors=None):
+    from perplexify import opensources
+
+    r = opensources.OpenSearch(per_query=per_query, used=list(used), counts={u: 1 for u in used}, errors=errors or {}, asked=list(used))
+    return r
+
+
+class NoKeys(TempHome):
+    """With nothing set up Research asks the open sources; a saved key takes over, and the open sources step in when it fails."""
+
+    def setUp(self):
+        import os
+
+        from perplexify import paths
+        from perplexify.context import AppContext
+
+        (paths.home() / "settings.json").unlink(missing_ok=True)          # every test starts with nothing set up
+        self.ctx = AppContext()
+        self.settings = self.ctx.settings
+        env = mock.patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("TAVILY_API_KEY", None)
+        os.environ.pop("BRAVE_API_KEY", None)
+
+    def result(self, n, source="PubMed", text=""):
+        return websearch.WebResult(f"Paper {n}", f"https://pubmed.ncbi.nlm.nih.gov/{n}/", "snippet " + str(n), source, text)
+
+    def test_without_a_key_the_open_sources_answer(self):
+        self.assertEqual(websearch.engine_name(self.settings), "open")
+        w = self.result(1)
+        with mock.patch("perplexify.opensources.search_many", lambda *a, **k: open_found([[w]], ("PubMed",))) as m:
+            results, engine = websearch.search("ecg arrhythmia", self.settings, 4)
+        self.assertEqual((results, engine), ([w], "PubMed"))
+
+    def test_nothing_found_says_why(self):
+        from perplexify import opensources
+
+        empty = open_found([[]], (), {"DuckDuckGo": "is refusing automated searches from this connection right now"})
+        empty.asked = ["DuckDuckGo"]
+        with mock.patch("perplexify.opensources.search_many", lambda *a, **k: empty):
+            with self.assertRaises(websearch.WebSearchError) as e:
+                websearch.search("ecg arrhythmia", self.settings, 4)
+        self.assertIn("DuckDuckGo is refusing automated searches", str(e.exception))
+
+    def test_a_saved_key_is_used_and_the_open_sources_are_not_asked(self):
+        self.settings.set_embedding_key("tavily", "tvly-test")
+        w = websearch.WebResult("Page", "https://example.org/a", "s")
+        with mock.patch("perplexify.websearch._tavily", lambda q, key, n: [w]), \
+                mock.patch("perplexify.opensources.search_many", side_effect=AssertionError("the open sources must not be asked")):
+            self.assertEqual(websearch.search("anything", self.settings, 3), ([w], "tavily"))
+
+    def test_when_the_keyed_service_fails_the_open_sources_step_in(self):
+        self.settings.set_embedding_key("tavily", "tvly-test")
+
+        def limit(q, key, n):
+            raise websearch.WebSearchError("Tavily's search limit was reached. Wait a moment, or check your plan.")
+        abstract = "Background: " + "x" * 300
+        w = self.result(7, text=abstract)
+        with mock.patch("perplexify.websearch._tavily", limit), \
+                mock.patch("perplexify.opensources.search_many", lambda *a, **k: open_found([[w]], ("PubMed",))):
+            hits, info = websearch.research(["ecg arrhythmia"], self.settings, question="ecg")
+        self.assertEqual([h.library_name for h in hits], ["PubMed"])
+        self.assertEqual(info["engine"], "PubMed")
+        self.assertIn("Tavily's search limit", info["errors"][0], "the reason the key was not used is kept in the trace")
+
+    def test_results_that_arrive_with_their_text_are_not_downloaded_and_the_others_are(self):
+        abstract = "Background: " + "an abstract sentence. " * 30
+        paper = self.result(1, "PubMed", abstract)
+        wiki = websearch.WebResult("PowerShell", "https://en.wikipedia.org/wiki/PowerShell", "a shell", "Wikipedia")
+        fetched = []
+        html = ("<html><head><title>PowerShell</title></head><body><main><h1>PowerShell</h1><p>" + "PowerShell is a shell with objects in a pipeline. " * 12
+                + "</p></main></body></html>").encode()
+
+        def fake_fetch(url, client):
+            fetched.append(url)
+            return url, html
+        found = open_found([[paper, wiki]], ("PubMed", "Wikipedia"), {"DuckDuckGo": "is refusing automated searches from this connection right now"})
+        found.counts = {"PubMed": 1, "Wikipedia": 1}
+        with mock.patch("perplexify.opensources.search_many", lambda *a, **k: found), mock.patch("perplexify.websearch.fetch_page", fake_fetch):
+            hits, info = websearch.research(["powershell pipeline"], self.settings, question="powershell pipeline objects")
+        self.assertEqual(fetched, ["https://en.wikipedia.org/wiki/PowerShell"], "only the page that needed reading was downloaded")
+        self.assertEqual([h.library_name for h in hits], ["PubMed", "Wikipedia"], "each result carries the name of its source")
+        self.assertEqual(hits[0].text, abstract.strip())
+        self.assertIn("PowerShell is a shell", hits[1].text)
+        self.assertEqual((info["engine"], info["pages"]), ("PubMed, Wikipedia", 2))
+        self.assertEqual(info["sources"], {"PubMed": 1, "Wikipedia": 1})
+        self.assertIn("DuckDuckGo", info["unavailable"])
+
+    def test_a_source_the_user_switched_off_is_not_asked(self):
+        self.settings.update({"web_sources": {"github": False, "duckduckgo": False}})
+        self.assertEqual(websearch.enabled_sources(self.settings), {"wikipedia", "pubmed", "arxiv", "openalex", "stackoverflow"})
+        seen = {}
+
+        def spy(queries, enabled=None, per_query=6, client=None):
+            seen["enabled"] = enabled
+            return open_found([[self.result(1)]], ("PubMed",))
+        with mock.patch("perplexify.opensources.search_many", spy):
+            websearch.search("ecg", self.settings, 3)
+        self.assertNotIn("github", seen["enabled"])
+
+    def test_the_test_button_reports_which_sources_answered(self):
+        found = open_found([[self.result(1), self.result(2, "arXiv")], []], ("PubMed", "arXiv"), {"DuckDuckGo": "is refusing automated searches from this connection right now"})
+        found.counts = {"PubMed": 1, "arXiv": 1}
+        with mock.patch("perplexify.opensources.search_many", lambda *a, **k: found):
+            r = websearch.test_search(self.settings)
+        self.assertEqual((r["engine"], r["results"], r["sources"]), ("open sources", 2, {"PubMed": 1, "arXiv": 1}))
+        self.assertIn("DuckDuckGo", r["unavailable"])
+
+    def test_the_endpoints_and_the_settings_page(self):
+        from fastapi.testclient import TestClient
+
+        from perplexify.server import create_app
+
+        client = TestClient(create_app(self.ctx), base_url="http://127.0.0.1")
+        s = client.get("/api/settings").json()
+        self.assertEqual([i["id"] for i in s["web_source_info"]][:3], ["wikipedia", "pubmed", "arxiv"])
+        self.assertTrue(all(i["name"] and i["about"] for i in s["web_source_info"]))
+        self.assertTrue(all(s["web_sources"].values()), "every source is on until the user switches it off")
+        s = client.put("/api/settings", json={"web_sources": {"github": False}}).json()
+        self.assertFalse(s["web_sources"]["github"])
+        self.assertTrue(s["web_sources"]["pubmed"])
+        found = open_found([[self.result(1)]], ("PubMed",))
+        found.counts = {"PubMed": 1}
+        with mock.patch("perplexify.opensources.search_many", lambda *a, **k: found):
+            r = client.post("/api/search-keys/test").json()
+        self.assertEqual((r["ok"], r["sources"]), (True, {"PubMed": 1}))
+        with mock.patch("perplexify.opensources.search_many", lambda *a, **k: open_found([[]], (), {})):
+            self.assertEqual(client.post("/api/search-keys/test").status_code, 400)
 
 
 class WebHelpers(unittest.TestCase):

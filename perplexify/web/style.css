@@ -446,11 +446,21 @@ input.input, select.input { height: 36px; }
 .thinking summary:hover { color: var(--text); }
 .thinking .t-label { flex: none; }    /* only as wide as its text, so the glimmer spends its whole pass on the word */
 .thinking .t-chev { width: 7px; height: 7px; margin: 0 2px 0 auto; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.2s ease; opacity: 0.7; }
-.thinking[open] .t-chev { transform: rotate(45deg) translate(-2px, -2px); }
+.thinking.expanded .t-chev { transform: rotate(45deg) translate(-2px, -2px); }
 .thinking .t-body {
-  padding: 2px 14px 12px 38px; max-height: 14em; overflow: auto; white-space: pre-wrap;
+  display: none; padding: 2px 14px 12px 38px; max-height: 14em; overflow: auto; white-space: pre-wrap;
   font-family: var(--read); font-size: 0.88em; line-height: 1.6; color: var(--muted);
 }
+.thinking.expanded .t-body { display: block; }
+/* while the model is thinking and thoughts are arriving, the box is slightly open: the last few lines, following the newest
+   text, with the older ones fading out at the top. The header opens the whole thing; when the thinking ends it closes again. */
+.thinking.live:not(.nothoughts):not(.expanded) .t-body {
+  display: block; max-height: 5em; overflow: hidden; padding-bottom: 10px; color: var(--text);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.35) 22%, #000 62%);
+  mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.35) 22%, #000 62%);
+  animation: t-peek-in 0.3s ease;
+}
+@keyframes t-peek-in { from { opacity: 0; } to { opacity: 1; } }
 /* while thinking: a glimmer sweeps across the label from left to right, a bright band with an accent edge.
    The gradient is twice the label's width, so moving it from 150% to -50% carries the band from just off the
    left edge to just off the right one; the pause at the end of each pass keeps it a glimmer, not a strobe. */
@@ -722,6 +732,6 @@ input.input, select.input { height: 36px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cursor, .ring.loading .arc, .bar.indeterminate > i, .spin, .mic-btn.listening, .mic-btn.busy, .card.flash,
-  .thinking.live .swirl, .thinking.live .swirl i, .thinking.live .t-label, .overlay, .modal, .toast { animation: none; }
+  .thinking.live .swirl, .thinking.live .swirl i, .thinking.live .t-label, .thinking .t-body, .overlay, .modal, .toast { animation: none; }
   .ring .arc, .bar > i, .card, .card:hover { transition: none; transform: none; }
 }

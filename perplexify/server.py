@@ -368,12 +368,11 @@ def create_app(ctx: AppContext | None = None, shutdown: Callable[[], None] | Non
 
     @app.post("/api/search-keys/test")
     def search_key_test():
-        """Run one small web search with whichever service is set up, to show that it works."""
+        """Run one small web search with whatever is set up (the open sources, or a saved key), to show that it works."""
         try:
-            results, engine = websearch.search("Perplexify documentation search", settings, 3)
+            return {"ok": True, **websearch.test_search(settings)}
         except websearch.WebSearchError as e:
             raise HTTPException(400, str(e)) from e
-        return {"ok": True, "engine": engine, "results": len(results)}
 
     @app.post("/api/embedders/test")
     def embedder_test(body: EmbedderBody):

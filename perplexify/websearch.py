@@ -2,11 +2,13 @@
 
 The connected model plans the searches (see rag.py); this module runs them and reads the pages:
 
-* search: Tavily or Brave Search when a key is saved (Settings > Search > Web research), else DuckDuckGo's
-  HTML page, which needs no key but refuses automated searches from time to time. A refusal is reported,
-  never worked around.
+* search: with nothing set up, the open sources of opensources.py (Wikipedia, PubMed, arXiv, OpenAlex, Stack Overflow, GitHub,
+  DuckDuckGo): no key, no account. A Tavily or Brave Search key saved in Settings > Search > Web research is used instead when there
+  is one (ordinary web results of the best quality), and the open sources step in if that service fails. A refusal from any
+  service is reported, never worked around.
 * read: the best results are downloaded in parallel and their main text is extracted with the same HTML
-  loader the libraries use. Only the passages that match the query best are kept, so many pages fit the window.
+  loader the libraries use. Only the passages that match the query best are kept, so many pages fit the window. A result that came
+  with its text (a paper's abstract, an answer) is used as it is and its page is not downloaded.
 * safety: only public http(s) addresses are opened. Every redirect is checked again, so a result can never
   point the app at this computer or the local network.
 """
@@ -17,37 +19,24 @@ import logging
 import os
 import re
 import socket
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from . import __version__
+from . import opensources
+from .opensources import PROJECT_URL, USER_AGENT, WebResult, WebSearchError   # noqa: F401  (pages are read under the app's own name too)
 from .retrieval import Hit
 from .textutil import search_terms
 
 log = logging.getLogger("perplexify.websearch")
 
-# Pages are read under the app's own name, never disguised as a browser, with the project's address as the contact
-# that sites such as Wikipedia require (they refuse requests without one).
-PROJECT_URL = "https://github.com/jonathanjasperse/Perplexify"
-USER_AGENT = f"Perplexify/{__version__} (+{PROJECT_URL}; desktop research assistant) python-httpx/{httpx.__version__}"
 MAX_PAGE_BYTES = 3 * 1024 * 1024
 PAGE_TIMEOUT = 12.0
 KEY_SERVICES = ("tavily", "brave")          # the keyed search services, best first
 ENV_KEYS = {"tavily": "TAVILY_API_KEY", "brave": "BRAVE_API_KEY"}
-
-
-class WebSearchError(RuntimeError):
-    """Raised with a message that is safe to show to the user."""
-
-
-@dataclass
-class WebResult:
-    title: str
-    url: str
-    snippet: str = ""
+OPEN_PER_QUERY, OPEN_MAX_PAGES = 6, 10       # the open sources return many short results: room for a few more of them
 
 
 # --------------------------------------------------------------------------- keys
@@ -63,10 +52,22 @@ def service_key(settings, service: str) -> str:
 
 
 def engine_name(settings) -> str:
+    """Which service answers searches: "tavily" or "brave" when a key is saved, otherwise "open" (the open sources)."""
     for s in KEY_SERVICES:
         if service_key(settings, s):
             return s
-    return "duckduckgo"
+    return "open"
+
+
+def enabled_sources(settings) -> set[str]:
+    """The ids of the open sources that are switched on (Settings > Search > Web research); all of them by default."""
+    flags = {}
+    if settings is not None:
+        try:
+            flags = settings.get().get("web_sources") or {}
+        except Exception:  # noqa: BLE001
+            flags = {}
+    return {sid for sid in opensources.SOURCE_IDS if flags.get(sid, True)}
 
 
 # --------------------------------------------------------------------------- search back ends
@@ -100,46 +101,34 @@ def _brave(query: str, key: str, n: int) -> list[WebResult]:
     return [w for w in out if w.url]
 
 
-def _duckduckgo(query: str, n: int) -> list[WebResult]:
-    from bs4 import BeautifulSoup
-
-    r = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, timeout=15, follow_redirects=True,
-                   headers={"User-Agent": USER_AGENT, "Accept-Language": "en"})
-    soup = BeautifulSoup(r.text, "lxml")
-    out = []
-    for d in soup.select("div.result"):
-        if "result--ad" in (d.get("class") or []):
-            continue
-        a = d.select_one("a.result__a")
-        if a is None:
-            continue
-        href = a.get("href") or ""
-        if "uddg=" in href:                                  # DuckDuckGo's own redirect: the real address is in uddg
-            href = unquote(parse_qs(urlparse(urljoin("https://duckduckgo.com", href)).query).get("uddg", [""])[0])
-        sn = d.select_one(".result__snippet")
-        if href.startswith(("http://", "https://")):
-            out.append(WebResult(a.get_text(" ", strip=True), href, sn.get_text(" ", strip=True) if sn else ""))
-        if len(out) >= n:
-            break
-    if not out and (r.status_code == 202 or "anomaly" in r.text.lower()):
-        raise WebSearchError("DuckDuckGo is refusing automated searches from this connection right now. Add a free "
-                             "Tavily or Brave Search key in Settings > Search > Web research.")
-    return out
-
-
 def search(query: str, settings=None, n: int = 6) -> tuple[list[WebResult], str]:
     """(results, the engine that found them). Raises WebSearchError with a readable message."""
     query = query.strip()[:400]
     if not query:
         return [], ""
-    try:
-        for s in KEY_SERVICES:
-            key = service_key(settings, s)
-            if key:
-                return (_tavily if s == "tavily" else _brave)(query, key, n), s
-        return _duckduckgo(query, n), "duckduckgo"
-    except httpx.HTTPError as e:
-        raise WebSearchError(f"Web search failed: could not reach the search service ({type(e).__name__}).") from e
+    for service in KEY_SERVICES:
+        key = service_key(settings, service)
+        if key:
+            try:
+                return (_tavily if service == "tavily" else _brave)(query, key, n), service
+            except httpx.HTTPError as e:
+                raise WebSearchError(f"Web search failed: could not reach the search service ({type(e).__name__}).") from e
+    found = opensources.search_many([query], enabled_sources(settings), n)
+    if not found.per_query or not found.per_query[0]:
+        raise WebSearchError(found.explain())
+    return found.per_query[0], found.label
+
+
+def test_search(settings) -> dict:
+    """One small search with whatever is set up, to show that it works: how many results, and from which sources."""
+    if engine_name(settings) != "open":
+        results, engine = search("how do neural networks learn", settings, 3)
+        return {"engine": engine, "results": len(results), "sources": {}, "unavailable": {}}
+    found = opensources.search_many(["how do neural networks learn", "neural network training backpropagation"], enabled_sources(settings), 5)
+    n = sum(len(r) for r in found.per_query)
+    if not n:
+        raise WebSearchError(found.explain())
+    return {"engine": "open sources", "results": n, "sources": found.counts, "unavailable": found.errors}
 
 
 # --------------------------------------------------------------------------- reading pages
@@ -227,20 +216,36 @@ def _domain(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def research(queries: list[str], settings=None, *, per_query: int = 5, max_pages: int = 8,
+def research(queries: list[str], settings=None, *, per_query: int | None = None, max_pages: int | None = None,
              chars_per_page: int = 3500, question: str = "") -> tuple[list[Hit], dict]:
-    """Run the searches, read the best pages, return them as passages (`Hit`, kind "web") plus a summary for the trace."""
+    """Run the searches, read the best pages, return them as passages (`Hit`, kind "web") plus a summary for the trace.
+
+    With a Tavily or Brave key that service answers; with none (or when it fails) the open sources do, all of them at once."""
+    queries = [q for q in dict.fromkeys(x.strip() for x in queries) if q][:4]
+    per: list[list[WebResult]] = []
+    engine, errors, extra = "", [], {}
+
+    keyed = engine_name(settings) != "open"
+    if keyed:
+        for q in queries:
+            try:
+                res, engine = search(q, settings, per_query or 5)
+            except WebSearchError as e:
+                errors.append(str(e))
+                continue
+            per.append(res)
+    if not keyed or not any(per):                      # no key set up, or its service failed or found nothing: the open sources
+        found_open = opensources.search_many(queries, enabled_sources(settings), per_query or OPEN_PER_QUERY)
+        per = found_open.per_query
+        engine = found_open.label or engine
+        extra = {"sources": found_open.counts, "unavailable": found_open.errors}
+        if not any(per):
+            errors.append(found_open.explain())
+    per_query = per_query or (5 if keyed and engine in KEY_SERVICES else OPEN_PER_QUERY)
+    max_pages = max_pages or (8 if keyed and engine in KEY_SERVICES else OPEN_MAX_PAGES)
+
     found: list[WebResult] = []
     seen: set[str] = set()
-    engine, errors = "", []
-    per: list[list[WebResult]] = []
-    for q in queries[:4]:
-        try:
-            res, engine = search(q, settings, per_query)
-        except WebSearchError as e:
-            errors.append(str(e))
-            continue
-        per.append(res)
     for rank in range(per_query):                             # take the results round robin, so every search contributes
         for res in per:
             if rank < len(res):
@@ -251,12 +256,14 @@ def research(queries: list[str], settings=None, *, per_query: int = 5, max_pages
     found = found[:max_pages]
     if not found:
         if errors:
-            raise WebSearchError(errors[0])
-        return [], {"engine": engine, "results": 0, "pages": 0}
+            raise WebSearchError(errors[-1])
+        return [], {"engine": engine, "results": 0, "pages": 0, **extra}
 
     terms = [t.lower() for t in search_terms(" ".join([question] + queries))][:30]
 
     def read(w: WebResult) -> tuple[WebResult, str, str, bool]:
+        if len(w.text) >= 200:                                 # it came with its text (an abstract, an answer): no page to download
+            return w, w.title, w.text[:chars_per_page].strip(), True
         try:
             with httpx.Client(timeout=httpx.Timeout(PAGE_TIMEOUT, connect=6), follow_redirects=False) as c:
                 got = fetch_page(w.url, c)
@@ -264,10 +271,10 @@ def research(queries: list[str], settings=None, *, per_query: int = 5, max_pages
                 title, passages = page_passages(got[1], got[0])
                 text = _best_text(passages, terms, chars_per_page)
                 if len(text) >= 200:
-                    return w, title or w.title, text, True
+                    return w, (w.title if w.source else title) or w.title, text, True       # a named source knows its title best
         except Exception as e:  # noqa: BLE001 - one unreadable page must not end the research
             log.debug("could not read %s: %s", w.url, e)
-        return w, w.title, w.snippet, False                    # fall back to what the search engine said about it
+        return w, w.title, w.snippet or w.text, False         # fall back to what the search engine said about it
 
     with ThreadPoolExecutor(max_workers=6, thread_name_prefix="web") as pool:
         pages = list(pool.map(read, found))
@@ -277,7 +284,10 @@ def research(queries: list[str], settings=None, *, per_query: int = 5, max_pages
         if not text.strip():
             continue
         read_n += was_read
-        hits.append(Hit(library_id="web", library_name=_domain(w.url), chunk_id=-(i + 1), doc_id=-(i + 1),
+        hits.append(Hit(library_id="web", library_name=w.source or _domain(w.url), chunk_id=-(i + 1), doc_id=-(i + 1),
                         title=_strip_tags(title or w.title) or _domain(w.url), uri=w.url, heading=_strip_tags(title or w.title),
                         anchor=None, text=text.strip(), origin="web", path=None, kind="web", score=round(1.0 - i * 0.05, 3)))
-    return hits, {"engine": engine, "results": len(found), "pages": read_n, "errors": errors[:2]}
+    if "sources" in extra:                                    # how many of what the model receives came from each source
+        used = Counter(h.library_name for h in hits)
+        extra["sources"] = {name: used[name] for name in (s.name for s in opensources.SOURCES.values()) if used[name]}
+    return hits, {"engine": engine, "results": len(found), "pages": read_n, "errors": errors[:2], **extra}

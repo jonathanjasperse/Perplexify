@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from . import osutil, paths, providers
+from . import opensources, osutil, paths, providers
 from .textutil import slugify
 
 PROFILE_KINDS = ("anthropic", "openai")
@@ -51,9 +51,17 @@ def default_settings() -> dict:
         "retrieval": dict(RETRIEVAL_DEFAULTS),
         "embedder": dict(DEFAULT_EMBEDDER),
         "embedding_keys": {},
+        "web_sources": {sid: True for sid in opensources.SOURCE_IDS},    # the open sources Research may search (all, until switched off)
         "server": {"port": 8765, "open_browser": True},
         "local": {"linked": []},     # .gguf files the user chose from elsewhere on the disk (used where they are)
     }
+
+
+def _clean_web_sources(raw: Any, base: dict | None = None) -> dict:
+    """{source id: on or off} for every open source that exists; anything unknown is dropped, anything missing is on."""
+    base = base or {}
+    raw = raw if isinstance(raw, dict) else {}
+    return {sid: bool(raw.get(sid, base.get(sid, True))) for sid in opensources.SOURCE_IDS}
 
 
 def _num(v: Any, lo: float, hi: float, default: Any, integer: bool = False) -> Any:
@@ -166,6 +174,7 @@ class Settings:
             data["embedder"] = clean_embedder(raw["embedder"])
         if isinstance(raw.get("embedding_keys"), dict):
             data["embedding_keys"] = {k: v for k, v in raw["embedding_keys"].items() if isinstance(v, str)}
+        data["web_sources"] = _clean_web_sources(raw.get("web_sources"))
         if isinstance(raw.get("server"), dict):
             data["server"].update({k: raw["server"][k] for k in ("port", "open_browser") if k in raw["server"]})
         if isinstance(raw.get("local"), dict):
@@ -215,6 +224,7 @@ class Settings:
             # "has_key" is what the interface reads as "connected": a local model needs no key, so it always counts
             p["has_key"] = bool(p.pop("api_key_enc", "")) or bool(p.get("use_env_key") and env) or providers.is_local(p)
         d["embedding_keys"] = {k: True for k, v in d["embedding_keys"].items() if v}
+        d["web_source_info"] = [{"id": s.id, "name": s.name, "about": s.about} for s in opensources.SOURCES.values()]
         return d
 
     def can_chat(self, profile: dict | None) -> bool:
@@ -354,6 +364,8 @@ class Settings:
                 d["retrieval"] = _clean_retrieval({**d["retrieval"], **body["retrieval"]})
             if isinstance(body.get("embedder"), dict):
                 d["embedder"] = clean_embedder(body["embedder"])
+            if isinstance(body.get("web_sources"), dict):
+                d["web_sources"] = _clean_web_sources(body["web_sources"], d["web_sources"])
             if isinstance(body.get("server"), dict):
                 s = body["server"]
                 if "port" in s:

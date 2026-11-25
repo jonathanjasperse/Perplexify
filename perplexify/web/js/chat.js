@@ -80,7 +80,7 @@ MR.renderComposer = function () {
     <div class="slash" id="slash" hidden></div>
     <div class="promptbox">
       <textarea id="prompt" rows="1" placeholder="Ask about your libraries..." aria-label="Question" spellcheck="true"></textarea>
-      <button class="research-btn" id="btn-research" type="button" aria-pressed="false" title="Research: the model also searches the web and cites the pages it read. Works with no library ticked.">
+      <button class="research-btn" id="btn-research" type="button" aria-pressed="false" title="Research: the model also searches Wikipedia, research papers, Stack Overflow, GitHub and the web, and cites what it read. No key needed. Works with no library ticked.">
         <span class="r-box" aria-hidden="true"></span>${ICON_GLOBE}<span>Research</span></button>
       <button class="btn primary small" id="btn-send" type="button">send</button></div>
     <div class="hintbar"><div class="left">
@@ -228,7 +228,7 @@ MR.beginTurn = function (q, opts = {}) {
   if (welcome) tr.innerHTML = '';
   tr.appendChild(MR.el(`<article class="turn user"><div class="column"><div class="prompt-line"><span class="caret">&gt;</span><div class="utext">${MR.esc(q)}</div></div></div></article>`));
   const turn = MR.el(`<article class="turn bot"><div class="column">
-      <div class="trace"></div><details class="thinking" hidden><summary><span class="swirl" aria-hidden="true"><i></i><i></i><i></i></span><span class="t-label">Thinking</span><span class="t-chev" aria-hidden="true"></span></summary><div class="t-body"></div></details>
+      <div class="trace"></div><details class="thinking" open hidden><summary><span class="swirl" aria-hidden="true"><i></i><i></i><i></i></span><span class="t-label">Thinking</span><span class="t-chev" aria-hidden="true"></span></summary><div class="t-body"></div></details>
       <div class="answer"></div><div class="notices"></div><div class="sources" hidden></div><div class="foot"></div></div></article>`);
   tr.appendChild(turn);
   if (!replay) tr.scrollTop = tr.scrollHeight;
@@ -236,6 +236,9 @@ MR.beginTurn = function (q, opts = {}) {
               sources: MR.$('.sources', turn), foot: MR.$('.foot', turn), text: '', thinking: '', srcs: [], est: 0, chars: 0, raf: 0,
               t0: performance.now(), usage: null, errored: false, lines: {} };
   turn._R = R;
+  // The header opens and closes the full thoughts by a class (see style.css): the details element stays open so that the text
+  // is there to be shown as a short, fading preview while the model is still thinking.
+  MR.$('summary', R.think).addEventListener('click', (e) => { e.preventDefault(); R.think.classList.toggle('expanded'); });
   const line = (key, html, cls = '') => {
     let el = R.lines[key];
     if (!el) { el = R.lines[key] = MR.el('<div class="ln"><span class="dot"></span><span class="body"></span></div>'); R.trace.appendChild(el); }
@@ -304,8 +307,15 @@ MR.beginTurn = function (q, opts = {}) {
           const w = d.web, ok = web.length > 0;
           if (R.lines.web) line('web', R.lines.web.querySelector('.body').innerHTML, ok ? 'done' : 'err');
           const domains = [...new Set(web.map((s) => s.library))].slice(0, 4).map((x) => MR.esc(x)).join(', ');
-          sub(ok ? `${web.length} web ${web.length === 1 ? 'page' : 'pages'} (${w.pages || 0} read in full) via ${MR.esc(w.engine || 'the web')}${domains ? ' &middot; ' + domains : ''}`
-                 : '<span class="warn">no web results' + (w.error ? ': ' + MR.esc(w.error) : '') + '</span>');
+          const named = Object.entries(w.sources || {});                       // the open sources: how many results each gave
+          const away = Object.keys(w.unavailable || {});
+          if (ok && named.length) {
+            sub(`${web.length} web ${web.length === 1 ? 'result' : 'results'} (${w.pages || 0} read in full) from ${named.map(([n, c]) => MR.esc(n) + ' ' + c).join(', ')}`
+                + (away.length ? ' &middot; <span class="faint">' + away.map((x) => MR.esc(x)).join(', ') + ' not available right now</span>' : ''));
+          } else {
+            sub(ok ? `${web.length} web ${web.length === 1 ? 'page' : 'pages'} (${w.pages || 0} read in full) via ${MR.esc(w.engine || 'the web')}${domains ? ' &middot; ' + domains : ''}`
+                   : '<span class="warn">no web results' + (w.error ? ': ' + MR.esc(w.error) : '') + '</span>');
+          }
         }
         MR.renderSources(R, turn);
         break;

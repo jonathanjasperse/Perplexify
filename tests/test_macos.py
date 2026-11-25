@@ -94,5 +94,65 @@ class BuildFiles(unittest.TestCase):
         self.assertIn("__main__", entry)
 
 
+class Dictation(unittest.TestCase):
+    """Dictation needs the microphone and the speech model inside the app; without these a Mac refuses or the feature is missing."""
+
+    def test_the_app_explains_the_microphone_and_is_allowed_to_use_it(self):
+        spec = (REPO / "installer" / "macos" / "Perplexify.spec").read_text("utf-8")
+        self.assertIn("NSMicrophoneUsageDescription", spec)
+        self.assertIn("com.apple.security.device.audio-input", (REPO / "installer" / "macos" / "entitlements.plist").read_text("utf-8"))
+
+    def test_the_speech_engine_and_model_are_bundled_and_tried_in_the_smoke_test(self):
+        spec = (REPO / "installer" / "macos" / "Perplexify.spec").read_text("utf-8")
+        for pkg in ("faster_whisper", "ctranslate2", "av"):
+            self.assertIn(f'"{pkg}"', spec)
+        wf = (REPO / ".github" / "workflows" / "macos-installer.yml").read_text("utf-8")
+        self.assertIn("--whisper", wf)
+        self.assertIn("/api/dictation/transcribe", wf)
+
+
+class OldestMacOS(unittest.TestCase):
+    def load(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("min_macos", REPO / "installer" / "macos" / "min_macos.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    OTOOL = """Load command 9
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 13.3
+      sdk 14.0
+Load command 10
+      cmd LC_SOURCE_VERSION
+Load command 3
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 10.9
+      sdk 10.9
+Load command 11
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 2
+    minos 16.0
+      sdk 17.0
+"""
+
+    def test_the_versions_a_file_asks_for_are_read_and_other_platforms_are_ignored(self):
+        m = self.load()
+        self.assertEqual(sorted(m.versions_in(self.OTOOL)), [(10, 9), (13, 3)])      # the iOS entry (platform 2) is not counted
+        self.assertEqual(m.newest(m.versions_in(self.OTOOL)), (13, 3))
+        self.assertIsNone(m.newest([]))
+        self.assertEqual(m.parse_version("11"), (11, 0))
+        self.assertGreater(m.parse_version("13.3"), m.parse_version("12.7"))     # compared as numbers, not as text
+
+    def test_the_workflow_runs_it_before_signing(self):
+        wf = (REPO / ".github" / "workflows" / "macos-installer.yml").read_text("utf-8")
+        self.assertLess(wf.index("min_macos.py"), wf.index("- name: Sign the app"))
+
+
 if __name__ == "__main__":
     unittest.main()

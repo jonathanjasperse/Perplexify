@@ -34,9 +34,32 @@ class Prompts(unittest.TestCase):
         self.assertIn("src/Foo.cpp:120-148", code)
         self.assertIn("go beyond the excerpts", code)
 
-    def test_web_research_keeps_its_own_prompt(self):
-        web = system([hit("web")], research=True, expert=True)
+    def test_research_answers_get_the_expert_researcher_prompt_for_claude_chatgpt_and_gemini(self):
+        self.assertEqual(rag.EXPERT_RESEARCH_PROVIDERS, ("anthropic", "openai", "gemini"))
+        web = system([hit("web")], research=True, expert_research=True)
+        self.assertIn("senior research partner for data scientists and biomedical engineers", web)
+        self.assertIn("A paper abstract is a summary of the paper, not its full text", web)
+        self.assertIn("Synthesise, do not just list", web)
+        self.assertIn("Judge the evidence like a reviewer", web)
+        self.assertIn("patient-wise versus record-wise", web)
+        self.assertIn("From general knowledge:", web)                       # their own reasoning is marked and kept apart from the sources
+        self.assertIn("Never invent a citation", web)
+        self.assertNotIn("careful research assistant", web)
+        self.assertNotIn("{", web)                                          # every placeholder was filled in
+        self.assertIn("Today is ", web)
+
+    def test_the_other_models_keep_the_strict_research_prompt(self):
+        web = system([hit("web")], research=True, expert=True)             # the flag for library questions does not change Research
         self.assertIn("careful research assistant", web)
+        self.assertNotIn("senior research partner", web)
+        self.assertNotIn("{", web)
+
+    def test_the_users_own_libraries_are_named_in_the_expert_research_prompt(self):
+        mixed = system([hit("web"), hit("doc")], research=True, expert_research=True)
+        self.assertIn("and passages from the user's own libraries (Demo)", mixed)
+
+    def test_research_with_nothing_from_the_web_uses_the_library_prompts(self):
+        self.assertIn("senior research partner for data scientists and biomedical engineers doing deep research", system([hit("doc")], research=True, expert=True, expert_research=True))
 
 
 if __name__ == "__main__":

@@ -110,5 +110,29 @@ class KeyStorage(TempHome):
             self.assertEqual(osutil.upgrade("plain:c2stb2xk"), "plain:c2stb2xk")
 
 
+class WebSources(TempHome):
+    def setUp(self):
+        (paths.home() / "settings.json").unlink(missing_ok=True)
+
+    def test_every_open_source_is_on_until_the_user_switches_it_off(self):
+        from perplexify import opensources
+
+        on = Settings().get()["web_sources"]
+        self.assertEqual(set(on), set(opensources.SOURCE_IDS))
+        self.assertTrue(all(on.values()))
+
+    def test_a_choice_is_kept_merged_and_cleaned(self):
+        s = Settings()
+        s.update({"web_sources": {"github": False}})
+        s.update({"web_sources": {"arxiv": False, "not-a-source": False}})            # a later change keeps the earlier one; unknown names are dropped
+        now = Settings().get()["web_sources"]                                          # ... and it is all still there after a restart
+        self.assertEqual({k for k, v in now.items() if not v}, {"github", "arxiv"})
+        self.assertNotIn("not-a-source", now)
+
+    def test_a_damaged_file_does_not_switch_everything_off(self):
+        (paths.home() / "settings.json").write_text(json.dumps({"version": 2, "web_sources": "off"}), "utf-8")
+        self.assertTrue(all(Settings().get()["web_sources"].values()))
+
+
 if __name__ == "__main__":
     unittest.main()
