@@ -11,6 +11,7 @@ __pycache__/
 installer/cache/
 installer/build/
 dist/
+perplexify-course/
 
 # editors and OS
 *.log
